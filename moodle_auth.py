@@ -157,6 +157,12 @@ def update_env(values: dict) -> str:
     if os.path.exists(ENV_PATH):
         with open(ENV_PATH, encoding="utf-8") as f:
             lines = f.read().splitlines()
+    else:
+        # 初回は .env.example を雛形にして、説明コメントごと引き継ぐ
+        example = os.path.join(os.path.dirname(ENV_PATH), ".env.example")
+        if os.path.exists(example):
+            with open(example, encoding="utf-8") as f:
+                lines = f.read().splitlines()
 
     for key, value in values.items():
         if value is None:
