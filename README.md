@@ -120,6 +120,12 @@ MCP サーバも各自の手元で動くため、他の人のデータが見え�
 $ gemini mcp list
 ```
 
+AI がどんな道具を受け取っているかは次で確認できます。
+
+```
+$ python list_tools.py
+```
+
 
 ## File architecture
 - .env : your environment settings（セットアップ画面が自動生成します）
@@ -129,6 +135,7 @@ $ gemini mcp list
 - moodle_auth.py : トークン取得・検証と .env 読み書きの共通処理
 - get_token.py : トークン取得のコマンドライン版
 - gemini_setup.py : Gemini CLI への登録処理
+- list_tools.py : 登録済みツールの一覧表示（確認・デモ用）
 - decode_token.py : SSO ログイン利用者向けのトークン取り出し
 - client.py   : process user's query, create a answer via LLM
 - client_localLLM.py   : when using a local LLM(ollama)
