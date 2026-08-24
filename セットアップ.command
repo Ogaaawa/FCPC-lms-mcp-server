@@ -31,6 +31,18 @@ if [ ! -f "$STAMP" ] || [ requirements.txt -nt "$STAMP" ]; then
     touch "$STAMP"
 fi
 
+# Gemini CLI（無ければ入れる。失敗してもセットアップは続行する）
+if ! command -v gemini >/dev/null 2>&1; then
+    if command -v npm >/dev/null 2>&1; then
+        echo "Gemini CLI をインストールしています..."
+        npm install -g @google/gemini-cli >/dev/null 2>&1 \
+            || echo "  -> 失敗しました。あとで手動で: npm install -g @google/gemini-cli"
+    else
+        echo "Node.js が見つからないため Gemini CLI は入れられません。"
+        echo "  Gemini から使う場合は https://nodejs.org/ から Node.js を入れてください。"
+    fi
+fi
+
 echo "セットアップ画面を開きます。"
 python setup_gui.py
 

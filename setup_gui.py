@@ -13,7 +13,9 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
+import gemini_setup
 import moodle_auth
+from gemini_setup import GeminiSetupError
 from moodle_auth import MoodleAuthError
 
 MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "llama3", "qwen2.5"]
@@ -86,9 +88,25 @@ class SetupApp:
             row=1, column=1, sticky="ew", pady=4
         )
 
+        # --- Gemini CLI 連携 ---
+        gem = ttk.LabelFrame(outer, text=" Gemini CLI ", padding=12)
+        gem.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+
+        self.register_gemini = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            gem,
+            text="Gemini CLI からこの Moodle ツールを使えるように登録する",
+            variable=self.register_gemini,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            gem,
+            text="Gemini CLI が未インストールの場合はこの項目は自動で飛ばされます。",
+            foreground="#555555",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+
         # --- ボタン ---
         buttons = ttk.Frame(outer)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(16, 0))
 
         self.run_button = ttk.Button(buttons, text="接続してセットアップ", command=self.on_setup)
         self.run_button.pack(side="left")
@@ -97,11 +115,11 @@ class SetupApp:
         ttk.Button(buttons, text="閉じる", command=root.destroy).pack(side="right")
 
         self.progress = ttk.Progressbar(outer, mode="indeterminate")
-        self.progress.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self.progress.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
         # --- 結果表示 ---
         self.status = tk.Text(outer, height=9, width=64, wrap="word", relief="solid", borderwidth=1)
-        self.status.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.status.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self.status.configure(state="disabled", background="#fafafa")
         self.status.tag_configure("ok", foreground="#12762e")
         self.status.tag_configure("ng", foreground="#c0261e")
@@ -183,6 +201,9 @@ class SetupApp:
 
             path = moodle_auth.update_env(values)
             self._post(f"4. 設定を保存しました: {path}", "ok")
+
+            self._register_gemini()
+
             self._post("")
             self._post("セットアップ完了です。この画面は閉じて構いません。", "ok")
             if not api_key:
@@ -199,6 +220,29 @@ class SetupApp:
             self._post(f"予期しないエラー: {type(e).__name__}: {e}", "ng")
         finally:
             self.queue.put(("done", None))
+
+
+    def _register_gemini(self):
+        """Gemini CLI への登録（任意）。失敗しても Moodle 設定は有効なままにする。"""
+        if not self.register_gemini.get():
+            return
+        if not gemini_setup.is_installed():
+            self._post("")
+            self._post("5. Gemini CLI が未インストールのため登録を飛ばしました。", "muted")
+            self._post("   使う場合は次を実行してください:", "muted")
+            self._post("     npm install -g @google/gemini-cli", "muted")
+            return
+        try:
+            self._post("")
+            self._post("5. Gemini CLI に登録しています...")
+            for line in gemini_setup.register():
+                self._post(f"   {line}")
+            self._post(f"   {gemini_setup.verify()}", "ok")
+            self._post("   Gemini CLI で「新着メッセージある？」などと聞けます。", "ok")
+        except GeminiSetupError as e:
+            self._post("   Gemini CLI への登録に失敗しました。", "ng")
+            self._post(f"   {e}", "ng")
+            self._post("   Moodle の設定自体は保存済みです。", "muted")
 
     def on_test(self):
         if self.busy:

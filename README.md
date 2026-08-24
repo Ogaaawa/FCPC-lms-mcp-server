@@ -60,12 +60,62 @@ $ python client_localLLM.py server.py   # ollama を使う場合
 **「保存済み設定で接続テスト」** ボタンでいつでも確認できます。
 
 
+## Gemini から使う
+
+Gemini CLI に登録すると、ターミナルで自然文のまま Moodle を操作できます。
+
+```
+$ gemini
+> 新着メッセージある？
+> 今週締切の課題を教えて
+```
+
+セットアップ画面の「Gemini CLI からこの Moodle ツールを使えるように登録する」に
+チェックを入れておけば、登録は自動で終わります（既定でオン）。
+`セットアップ.command` は Gemini CLI 自体のインストールも行います。
+
+初回のみ Gemini へのログインが必要です。`gemini` を起動して
+「Login with Google」を選び、個人の Google アカウントでログインしてください。
+
+トークンは各自のパソコンの `.env` に保存され、**外部に送信されません**。
+MCP サーバも各自の手元で動くため、他の人のデータが見えることはありません。
+
+手動で登録する場合は `~/.gemini/settings.json` に次を書きます。
+
+```json
+{
+  "mcpServers": {
+    "moodle": {
+      "command": "<このフォルダ>/venv/bin/python",
+      "args": ["<このフォルダ>/server.py"],
+      "cwd": "<このフォルダ>",
+      "timeout": 60000
+    }
+  }
+}
+```
+
+さらに `~/.gemini/trustedFolders.json` にこのフォルダを登録してください。
+**信頼されていないフォルダでは Gemini CLI が MCP サーバを無効化します。**
+
+```json
+{ "<このフォルダ>": "TRUST_FOLDER" }
+```
+
+登録できたかは次で確認できます（`Connected` と出れば成功）。
+
+```
+$ gemini mcp list
+```
+
+
 ## File architecture
 - .env : your environment settings（セットアップ画面が自動生成します）
 - setup_gui.py : セットアップ画面（トークン取得〜.env 保存）
 - セットアップ.command : macOS 用のダブルクリック起動
 - moodle_auth.py : トークン取得・検証と .env 読み書きの共通処理
 - get_token.py : トークン取得のコマンドライン版
+- gemini_setup.py : Gemini CLI への登録処理
 - decode_token.py : SSO ログイン利用者向けのトークン取り出し
 - client.py   : process user's query, create a answer via LLM
 - client_localLLM.py   : when using a local LLM(ollama)

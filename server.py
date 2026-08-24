@@ -4,6 +4,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 from datetime import datetime, timedelta, timezone
 import re
+import html
 import os
 import sys
 
@@ -68,10 +69,9 @@ async def async_get(url: str, params: dict) -> dict | None:
 
 @mcp.tool()
 async def get_my_userid() -> int:
-    """Get user id from Moodle.
+    """Return the Moodle user id of the currently authenticated user.
 
-    Args:
-        user_id (int): user id.
+    Mainly an internal helper for the other tools. Takes no arguments.
     """
     url = f"{MOODLE_URL}/webservice/rest/server.php"
     params = {
@@ -86,11 +86,17 @@ async def get_my_userid() -> int:
 
 @mcp.tool()
 async def get_due_assignments(days: int) -> str:
-    """Get assignmets whose deadline will be witin the designated date by client from Moodle.
+    """List the user's Moodle assignments due within the next `days` days.
+
+    Use this for questions about homework, assignments, submissions or their
+    deadlines (e.g. "what is due this week?", "any assignments due soon?").
 
     Args:
-        the due date (str): date and time of assignment.
-        assignmet (str): assignment.
+        days: How many days ahead to look. For example 7 means the coming week.
+
+    Returns:
+        A human readable list of course name, assignment name and due date,
+        or a message saying nothing is due in that period.
     """
     url = f"{MOODLE_URL}/webservice/rest/server.php"
     params = {
@@ -116,12 +122,14 @@ async def get_due_assignments(days: int) -> str:
 
 @mcp.tool()
 async def check_new_messages() -> str:
-    """Get new messages from Moodle.
+    """List the user's unread Moodle messages, newest conversations first.
 
-    Args:
-        sender: (str): name of sender.
-        time (str): date and time of message.
-        message (str):  which are ongoing in 2025.
+    Use this for questions about messages, notifications from teachers or
+    classmates, or anything like "do I have new messages?". Takes no arguments.
+
+    Returns:
+        For each unread conversation: the sender, the unread count and the
+        message texts with their timestamps in JST.
     """
     userid = await get_my_userid()
     url = f"{MOODLE_URL}/webservice/rest/server.php"
@@ -139,30 +147,43 @@ async def check_new_messages() -> str:
 
     unread_msgs = []
     for conv in data["conversations"]:
-        if not conv.get("isread", True):
-            sender = conv.get("members", [{}])[0].get("fullname", "不明")
-            count = conv.get("unreadcount", 0)
-            # メッセージ内容を取得
-            messages = conv.get("messages", [])
-            msg_texts = []
-            for msg in messages:
-                # メッセージ本文はHTML形式のことが多いのでタグ除去してテキスト化
-                text_html = msg.get("text", "")
-                text_plain = re.sub(r'<[^>]+>', '', text_html).strip()
-                msg_texts.append(text_plain)
-                time = unix_to_jst_str(msg.get("timecreated"))
+        if conv.get("isread", True):
+            continue
 
-            unread_msgs.append(f"送信者: {sender}\n 送信日: {time}\n未読メッセージ数: {count}\nメッセージ内容:\n" + "\n".join(msg_texts))
+        # members が空のこともあるので添字アクセスしない
+        members = conv.get("members") or []
+        sender = members[0].get("fullname", "不明") if members else "不明"
+        count = conv.get("unreadcount") or 0
+
+        # 会話ごとに組み立てる（前の会話の値を持ち越さない）
+        lines = []
+        for msg in conv.get("messages") or []:
+            # メッセージ本文はHTML形式のことが多いのでタグ除去してテキスト化
+            text_plain = re.sub(r"<[^>]+>", "", msg.get("text") or "")
+            text_plain = html.unescape(text_plain).strip()
+            sent_at = unix_to_jst_str(msg.get("timecreated"))
+            lines.append(f"  [{sent_at}] {text_plain}" if sent_at else f"  {text_plain}")
+
+        body = "\n".join(lines) if lines else "  (本文を取得できませんでした)"
+        unread_msgs.append(f"送信者: {sender}（未読 {count} 件）\n{body}")
 
     return "\n\n".join(unread_msgs) if unread_msgs else "未読メッセージはありません。"
 
 
 @mcp.tool()
-async def get_pending_quizzes(days: int = None) -> str:
-    """Get uncomleted quize from Moodle.
+async def get_pending_quizzes(days: int | None = None) -> str:
+    """List quizzes the user has not completed yet.
+
+    Use this for questions about quizzes, tests or exams that still need to be
+    taken. A quiz counts as pending when it has no attempt yet, or an attempt
+    that is still in progress or overdue.
 
     Args:
-        quize (str): name of quize which are ongoing in 2025.
+        days: Optional. If given, only quizzes due within that many days are
+            returned. If omitted, all pending quizzes are returned.
+
+    Returns:
+        A human readable list of course name, quiz name and due date.
     """
     userid = await get_my_userid()
     url = f"{MOODLE_URL}/webservice/rest/server.php"
@@ -222,10 +243,13 @@ async def get_pending_quizzes(days: int = None) -> str:
 
 @mcp.tool()
 async def get_my_courses() -> str:
-    """Get user's courses from Moodle.
+    """List every Moodle course the user is currently enrolled in.
 
-    Args:
-        subject (str): name of subjects which are ongoing in 2025.
+    Use this for questions about which courses, subjects or classes the user is
+    taking. Takes no arguments.
+
+    Returns:
+        A list of course full names with their Moodle course ids.
     """
 
     userid = await get_my_userid()
