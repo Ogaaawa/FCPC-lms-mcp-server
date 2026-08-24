@@ -139,6 +139,7 @@ $ python list_tools.py
 - decode_token.py : SSO ログイン利用者向けのトークン取り出し
 - client.py   : process user's query, create a answer via LLM
 - client_localLLM.py   : when using a local LLM(ollama)
+- moodle_client.py : Moodle API クライアント（ユーザーごとにトークンを持つ）
 - server.py : run tools
 - requirements.txt
 - README.md
