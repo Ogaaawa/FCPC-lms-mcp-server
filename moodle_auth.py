@@ -179,3 +179,18 @@ def update_env(values: dict) -> str:
     with open(ENV_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip("\n") + "\n")
     return ENV_PATH
+
+
+def connector_url(base_url: str, token: str) -> str:
+    """Claude のカスタムコネクタに登録する URL を組み立てる。
+
+    この URL はパスワードと同じ秘密情報。他人に渡さないこと。
+    """
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if not re.match(r"^https?://", base):
+        base = "https://" + base
+    # 末尾に /u/<token>/mcp が付いた形にする
+    base = re.sub(r"/u/[^/]+/mcp/?$", "", base).rstrip("/")
+    return f"{base}/u/{token}/mcp"

@@ -72,59 +72,52 @@ $ python client_localLLM.py server.py   # ollama を使う場合
 **「保存済み設定で接続テスト」** ボタンでいつでも確認できます。
 
 
-## Gemini から使う
+## Claude から使う（スマホ対応）
 
-Gemini CLI に登録すると、ターミナルで自然文のまま Moodle を操作できます。
-
-```
-$ gemini
-> 新着メッセージある？
-> 今週締切の課題を教えて
-```
-
-セットアップ画面の「Gemini CLI からこの Moodle ツールを使えるように登録する」に
-チェックを入れておけば、登録は自動で終わります（既定でオン）。
-`セットアップ.command` は Gemini CLI 自体のインストールも行います。
-
-初回のみ Gemini へのログインが必要です。`gemini` を起動して
-「Login with Google」を選び、個人の Google アカウントでログインしてください。
-
-トークンは各自のパソコンの `.env` に保存され、**外部に送信されません**。
-MCP サーバも各自の手元で動くため、他の人のデータが見えることはありません。
-
-手動で登録する場合は `~/.gemini/settings.json` に次を書きます。
-
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "command": "<このフォルダ>/venv/bin/python",
-      "args": ["<このフォルダ>/server.py"],
-      "cwd": "<このフォルダ>",
-      "timeout": 60000
-    }
-  }
-}
-```
-
-さらに `~/.gemini/trustedFolders.json` にこのフォルダを登録してください。
-**信頼されていないフォルダでは Gemini CLI が MCP サーバを無効化します。**
-
-```json
-{ "<このフォルダ>": "TRUST_FOLDER" }
-```
-
-登録できたかは次で確認できます（`Connected` と出れば成功）。
+Claude のカスタムコネクタとして登録すると、**iPhone や Android からも**
+自分の Moodle を自然文で聞けるようになります。Claude は無料プランで使えます。
 
 ```
-$ gemini mcp list
+「新着メッセージある？」
+「今週締切の課題を教えて」
 ```
 
-AI がどんな道具を受け取っているかは次で確認できます。
+### 先生（サーバーを動かす人）
+
+`サーバー起動.command` を **ダブルクリック**すると、公開アドレスが表示されます。
 
 ```
-$ python list_tools.py
+https://xxxx-xxxx.trycloudflare.com
 ```
+
+このアドレスを学生に伝えてください。**この画面を閉じるとサーバも止まります。**
+事前に `brew install cloudflared` が必要です。
+
+### 学生
+
+1. `セットアップ.command`（Windows は `セットアップ.bat`）を実行
+2. Moodle のユーザー名・パスワードと、先生から聞いた**サーバーのアドレス**を入力
+3. 「接続してセットアップ」を押すと**あなた専用の URL** が表示されるので「コピー」
+4. ブラウザで [claude.ai](https://claude.ai) を開き、設定 → コネクタ →
+   「カスタムコネクタを追加」に貼り付ける
+
+以降は Claude アプリ（iPhone / Android）からも使えます。
+
+> **専用 URL はパスワードと同じ秘密情報です。** 他人に渡すと自分の Moodle を
+> 見られてしまいます。サーバー側にトークンは保存されません。
+
+### 仕組み
+
+```
+学生の Claude ──HTTPS──▶ MCP サーバー ──▶ Moodle
+                    (URL に各自のトークン)
+```
+
+URL に含まれるトークンでリクエストごとに Moodle クライアントを作るため、
+1台のサーバーで複数人ぶんを扱っても、他人のデータは見えません。
+
+コネクタを追加できるのは claude.ai（Web）だけですが、**スマホのブラウザからでも
+追加できます**。追加後はアカウントに同期され、アプリから使えます。
 
 
 ## File architecture
@@ -134,7 +127,9 @@ $ python list_tools.py
 - セットアップ.bat : Windows 用のダブルクリック起動
 - moodle_auth.py : トークン取得・検証と .env 読み書きの共通処理
 - get_token.py : トークン取得のコマンドライン版
-- gemini_setup.py : Gemini CLI への登録処理
+- remote_server.py : Claude コネクタ用のリモート MCP サーバ
+- サーバー起動.command : サーバ公開（macOS）
+- gemini_setup.py : Gemini CLI への登録処理（現在は未使用）
 - list_tools.py : 登録済みツールの一覧表示（確認・デモ用）
 - decode_token.py : SSO ログイン利用者向けのトークン取り出し
 - client.py   : process user's query, create a answer via LLM

@@ -13,9 +13,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-import gemini_setup
 import moodle_auth
-from gemini_setup import GeminiSetupError
 from moodle_auth import MoodleAuthError
 
 MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "llama3", "qwen2.5"]
@@ -88,21 +86,35 @@ class SetupApp:
             row=1, column=1, sticky="ew", pady=4
         )
 
-        # --- Gemini CLI 連携 ---
-        gem = ttk.LabelFrame(outer, text=" Gemini CLI ", padding=12)
-        gem.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        # --- Claude コネクタ ---
+        con = ttk.LabelFrame(outer, text=" Claude に登録する URL ", padding=12)
+        con.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        con.columnconfigure(1, weight=1)
 
-        self.register_gemini = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            gem,
-            text="Gemini CLI からこの Moodle ツールを使えるように登録する",
-            variable=self.register_gemini,
-        ).grid(row=0, column=0, sticky="w")
+        self.server_base = tk.StringVar(value=placeholder(saved.get("CONNECTOR_BASE_URL")))
+        self.connector = tk.StringVar()
+
+        ttk.Label(con, text="サーバーのアドレス").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Entry(con, textvariable=self.server_base, width=34).grid(
+            row=0, column=1, sticky="ew", pady=4
+        )
         ttk.Label(
-            gem,
-            text="Gemini CLI が未インストールの場合はこの項目は自動で飛ばされます。",
+            con,
+            text="先生から知らされたアドレスを入れてください（例: https://xxxx.trycloudflare.com）",
             foreground="#555555",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        ttk.Label(con, text="あなた専用の URL").grid(row=2, column=0, sticky="w", padx=(0, 10))
+        entry = ttk.Entry(con, textvariable=self.connector, width=34, state="readonly")
+        entry.grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Button(con, text="コピー", command=self.copy_connector).grid(
+            row=3, column=1, sticky="e", pady=(4, 0)
+        )
+        ttk.Label(
+            con,
+            text="この URL はパスワードと同じです。他の人に渡さないでください。",
+            foreground="#c0261e",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- ボタン ---
         buttons = ttk.Frame(outer)
@@ -163,6 +175,8 @@ class SetupApp:
                 break
             if kind == "log":
                 self._log(*payload)
+            elif kind == "connector":
+                self.connector.set(payload)
             elif kind == "done":
                 self._set_busy(False)
         self.root.after(100, self._drain_queue)
@@ -202,7 +216,9 @@ class SetupApp:
             path = moodle_auth.update_env(values)
             self._post(f"4. 設定を保存しました: {path}", "ok")
 
-            self._register_gemini()
+            normalized_base = self._show_connector(token)
+            if normalized_base:
+                moodle_auth.update_env({"CONNECTOR_BASE_URL": normalized_base})
 
             self._post("")
             self._post("セットアップ完了です。この画面は閉じて構いません。", "ok")
@@ -222,27 +238,31 @@ class SetupApp:
             self.queue.put(("done", None))
 
 
-    def _register_gemini(self):
-        """Gemini CLI への登録（任意）。失敗しても Moodle 設定は有効なままにする。"""
-        if not self.register_gemini.get():
+    def copy_connector(self):
+        """生成された URL をクリップボードにコピーする。"""
+        url = self.connector.get()
+        if not url:
+            self._log("先に「接続してセットアップ」を実行してください。", "muted")
             return
-        if not gemini_setup.is_installed():
+        self.root.clipboard_clear()
+        self.root.clipboard_append(url)
+        self._log("URL をコピーしました。Claude のコネクタ追加画面に貼り付けてください。", "ok")
+
+    def _show_connector(self, token):
+        """Claude に登録する URL を組み立てて表示する。"""
+        base = self.server_base.get().strip()
+        if not base:
             self._post("")
-            self._post("5. Gemini CLI が未インストールのため登録を飛ばしました。", "muted")
-            self._post("   使う場合は次を実行してください:", "muted")
-            self._post("     npm install -g @google/gemini-cli", "muted")
-            return
-        try:
-            self._post("")
-            self._post("5. Gemini CLI に登録しています...")
-            for line in gemini_setup.register():
-                self._post(f"   {line}")
-            self._post(f"   {gemini_setup.verify()}", "ok")
-            self._post("   Gemini CLI で「新着メッセージある？」などと聞けます。", "ok")
-        except GeminiSetupError as e:
-            self._post("   Gemini CLI への登録に失敗しました。", "ng")
-            self._post(f"   {e}", "ng")
-            self._post("   Moodle の設定自体は保存済みです。", "muted")
+            self._post("5. サーバーのアドレスが未入力のため URL を作れませんでした。", "muted")
+            self._post("   先生から知らされたアドレスを入れて、もう一度実行してください。", "muted")
+            return None
+        url = moodle_auth.connector_url(base, token)
+        self.queue.put(("connector", url))
+        self._post("")
+        self._post("5. あなた専用の URL を作りました。", "ok")
+        self._post(f"   {url}")
+        self._post("   Claude の「カスタムコネクタを追加」にこの URL を貼り付けてください。", "ok")
+        return moodle_auth.normalize_url(base)
 
     def on_test(self):
         if self.busy:
