@@ -1,7 +1,7 @@
 #!/bin/bash
 # 学生の Claude から使えるように、MCP サーバを公開する（macOS 用）。
-# ダブルクリックで起動し、公開アドレスを表示する。
-# 閉じるとサーバも止まるので、デモ中は開いたままにすること。
+# ダブルクリックで起動し、学生に伝える URL を表示する。
+# この画面を閉じるとサーバも止まるので、使う間は開いたままにすること。
 cd "$(dirname "$0")" || exit 1
 
 PORT="${PORT:-8000}"
@@ -23,23 +23,13 @@ LOG="$(mktemp -t moodle-tunnel)"
 cleanup() {
     echo ""
     echo "停止しています..."
-    [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+    [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null
     rm -f "$LOG"
 }
 trap cleanup EXIT INT TERM
 
-echo "MCP サーバを起動しています..."
-venv/bin/python remote_server.py --port "$PORT" &
-SERVER_PID=$!
-
-sleep 2
-if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "サーバの起動に失敗しました。"
-    read -r -p "Enter キーで閉じます..."
-    exit 1
-fi
-
+# 公開アドレスが先に決まらないとサーバを起動できない（OAuth の発行者になるため）
 echo "公開アドレスを取得しています..."
 cloudflared tunnel --url "http://127.0.0.1:$PORT" --no-autoupdate > "$LOG" 2>&1 &
 TUNNEL_PID=$!
@@ -57,14 +47,26 @@ if [ -z "$PUBLIC" ]; then
     exit 1
 fi
 
+echo "MCP サーバを起動しています..."
+venv/bin/python remote_server.py --port "$PORT" --public-url "$PUBLIC" &
+SERVER_PID=$!
+
+sleep 3
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "サーバの起動に失敗しました。"
+    read -r -p "Enter キーで閉じます..."
+    exit 1
+fi
+
 echo ""
 echo "============================================================"
-echo " 学生に伝えるサーバーのアドレス"
+echo " 学生に伝える URL（全員これ1本）"
 echo ""
-echo "   $PUBLIC"
+echo "   $PUBLIC/mcp"
 echo ""
-echo " 学生はセットアップ画面でこのアドレスを入れると、"
-echo " 自分専用の URL が表示されます。"
+echo " 学生は claude.ai の「カスタムコネクタを追加」に"
+echo " この URL を貼り付けるだけです。"
+echo " ログイン画面は Claude が自動で開きます。"
 echo "============================================================"
 echo ""
 echo "この画面を閉じるとサーバも止まります。Ctrl+C で終了。"

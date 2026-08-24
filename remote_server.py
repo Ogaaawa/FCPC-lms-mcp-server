@@ -1,196 +1,224 @@
-"""Claude のカスタムコネクタ用のリモート MCP サーバ（streamable HTTP）。
+"""Claude のカスタムコネクタ用のリモート MCP サーバ（streamable HTTP + OAuth）。
 
-各利用者は自分専用の URL を1つ登録するだけで使える。
+学生は全員 同じ URL を1本登録するだけでよい。
 
-    https://<公開ホスト>/u/<Moodleトークン>/mcp
+    https://<公開ホスト>/mcp
 
-URL に含まれるトークンでその都度 Moodle クライアントを作るため、
-サーバ側にトークンを保存しない。利用者どうしのデータも混ざらない。
+Claude が自動で Moodle のログイン画面を開き、ログインするとその人の
+トークンが払い出される。スマートフォンのブラウザだけで完結する。
+
+Moodle のトークンはサーバに保存しない。アクセストークンに暗号化して
+埋め込み、リクエストごとに復号して使う。
 
 起動:
-    python remote_server.py                 # 127.0.0.1:8000
-    python remote_server.py --port 9000
-    python remote_server.py --host 0.0.0.0
-
-URL はパスワードと同じ秘密情報なので、アクセスログには残さない。
+    python remote_server.py --public-url https://xxxx.trycloudflare.com
 """
 import argparse
-import contextvars
 import os
-import re
 
 from dotenv import load_dotenv
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
+import login_page
 from moodle_client import MoodleClient
+from oauth_provider import SCOPE, MoodleOAuthProvider
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 MOODLE_URL = os.getenv("MOODLE_URL")
 IMPERSONATE = os.getenv("MOODLE_IMPERSONATE", "chrome131")
 
-# リクエストごとの Moodle トークン
-_token: contextvars.ContextVar[str | None] = contextvars.ContextVar("moodle_token", default=None)
-
-# stateless_http にすると 1 リクエストが 1 セッションとして完結するため、
-# リクエストごとに違うトークンを扱える。
-mcp = FastMCP("moodle_assistant", stateless_http=True)
+_provider: MoodleOAuthProvider | None = None
+mcp: FastMCP | None = None
 
 
 def get_client() -> MoodleClient:
-    token = _token.get()
+    """いま呼び出している利用者の Moodle クライアントを返す。"""
+    access = get_access_token()
+    if access is None:
+        raise RuntimeError("ログインが必要です。Claude でコネクタを接続し直してください。")
+    token = _provider.unseal(access.token)
     if not token:
-        raise RuntimeError(
-            "この URL にはトークンが含まれていません。"
-            "https://<ホスト>/u/<あなたのMoodleトークン>/mcp の形式で登録してください。"
-        )
-    if not MOODLE_URL:
-        raise RuntimeError("サーバ側の .env に MOODLE_URL がありません。")
+        raise RuntimeError("ログインの有効期限が切れました。接続し直してください。")
     return MoodleClient(MOODLE_URL, token, impersonate=IMPERSONATE)
 
 
-@mcp.tool()
-async def get_my_userid() -> int:
-    """Return the Moodle user id of the currently authenticated user.
+def build(public_url: str) -> FastMCP:
+    """OAuth 付きの MCP サーバを組み立てる。"""
+    global _provider, mcp
 
-    Mainly an internal helper for the other tools. Takes no arguments.
-    """
-    return await get_client().get_userid()
+    _provider = MoodleOAuthProvider(public_url)
+    mcp = FastMCP(
+        "moodle_assistant",
+        stateless_http=True,
+        auth_server_provider=_provider,
+        auth=AuthSettings(
+            issuer_url=public_url,
+            required_scopes=[SCOPE],
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE]
+            ),
+        ),
+    )
 
+    @mcp.tool()
+    async def get_my_userid() -> int:
+        """Return the Moodle user id of the currently authenticated user.
 
-@mcp.tool()
-async def get_due_assignments(days: int) -> str:
-    """List the user's Moodle assignments due within the next `days` days.
+        Mainly an internal helper for the other tools. Takes no arguments.
+        """
+        return await get_client().get_userid()
 
-    Use this for questions about homework, assignments, submissions or their
-    deadlines (e.g. "what is due this week?", "any assignments due soon?").
+    @mcp.tool()
+    async def get_due_assignments(days: int) -> str:
+        """List the user's Moodle assignments due within the next `days` days.
 
-    Args:
-        days: How many days ahead to look. For example 7 means the coming week.
+        Use this for questions about homework, assignments, submissions or their
+        deadlines (e.g. "what is due this week?", "any assignments due soon?").
 
-    Returns:
-        A human readable list of course name, assignment name and due date,
-        or a message saying nothing is due in that period.
-    """
-    return await get_client().get_due_assignments(days)
+        Args:
+            days: How many days ahead to look. For example 7 means the coming week.
 
+        Returns:
+            A human readable list of course name, assignment name and due date,
+            or a message saying nothing is due in that period.
+        """
+        return await get_client().get_due_assignments(days)
 
-@mcp.tool()
-async def check_new_messages() -> str:
-    """List the user's unread Moodle messages, newest conversations first.
+    @mcp.tool()
+    async def check_new_messages() -> str:
+        """List the user's unread Moodle messages, newest conversations first.
 
-    Use this for questions about messages, notifications from teachers or
-    classmates, or anything like "do I have new messages?". Takes no arguments.
+        Use this for questions about messages, notifications from teachers or
+        classmates, or anything like "do I have new messages?". Takes no arguments.
 
-    Returns:
-        For each unread conversation: the sender, the unread count and the
-        message texts with their timestamps in JST.
-    """
-    return await get_client().check_new_messages()
+        Returns:
+            For each unread conversation: the sender, the unread count and the
+            message texts with their timestamps in JST.
+        """
+        return await get_client().check_new_messages()
 
+    @mcp.tool()
+    async def get_pending_quizzes(days: int | None = None) -> str:
+        """List quizzes the user has not completed yet.
 
-@mcp.tool()
-async def get_pending_quizzes(days: int | None = None) -> str:
-    """List quizzes the user has not completed yet.
+        Use this for questions about quizzes, tests or exams that still need to be
+        taken. A quiz counts as pending when it has no attempt yet, or an attempt
+        that is still in progress or overdue.
 
-    Use this for questions about quizzes, tests or exams that still need to be
-    taken. A quiz counts as pending when it has no attempt yet, or an attempt
-    that is still in progress or overdue.
+        Args:
+            days: Optional. If given, only quizzes due within that many days are
+                returned. If omitted, all pending quizzes are returned.
 
-    Args:
-        days: Optional. If given, only quizzes due within that many days are
-            returned. If omitted, all pending quizzes are returned.
+        Returns:
+            A human readable list of course name, quiz name and due date.
+        """
+        return await get_client().get_pending_quizzes(days)
 
-    Returns:
-        A human readable list of course name, quiz name and due date.
-    """
-    return await get_client().get_pending_quizzes(days)
+    @mcp.tool()
+    async def get_my_courses() -> str:
+        """List every Moodle course the user is currently enrolled in.
 
+        Use this for questions about which courses, subjects or classes the user is
+        taking. Takes no arguments.
 
-@mcp.tool()
-async def get_my_courses() -> str:
-    """List every Moodle course the user is currently enrolled in.
+        Returns:
+            A list of course full names with their Moodle course ids.
+        """
+        return await get_client().get_courses()
 
-    Use this for questions about which courses, subjects or classes the user is
-    taking. Takes no arguments.
-
-    Returns:
-        A list of course full names with their Moodle course ids.
-    """
-    return await get_client().get_courses()
-
-
-# --- URL からトークンを取り出す ASGI ラッパ -----------------------------
-# 例) /u/<token>/mcp  ->  内側の MCP アプリには /mcp として渡す
-USER_PATH = re.compile(r"^/u/(?P<token>[A-Za-z0-9._~-]{8,128})(?P<rest>/.*)?$")
-
-# Moodle のトークンは 32 桁の英数字。想定外の文字列は弾く。
-_inner_app = mcp.streamable_http_app()
-
-
-async def app(scope, receive, send):
-    if scope["type"] == "lifespan":
-        # セッションマネージャの起動・終了をそのまま内側に渡す
-        await _inner_app(scope, receive, send)
-        return
-
-    if scope["type"] != "http":
-        await _inner_app(scope, receive, send)
-        return
-
-    match = USER_PATH.match(scope.get("path", ""))
-    if not match:
-        await _plain_response(
-            send, 404,
-            "この URL は正しくありません。\n"
-            "https://<ホスト>/u/<あなたのMoodleトークン>/mcp の形式で登録してください。\n",
-        )
-        return
-
-    # 内側は Mount("/mcp") なので、末尾スラッシュ付きで渡す。
-    # スラッシュ無しだと Starlette が /mcp/ へリダイレクトを返し、
-    # その際に /u/<token> のプレフィックスが失われてしまう。
-    mount = mcp.settings.streamable_http_path.rstrip("/")
-    rest = match.group("rest") or ""
-    suffix = rest[len(mount):] if rest.startswith(mount) else ""
-    rest = mount + (suffix if suffix.startswith("/") else "/")
-
-    inner_scope = dict(scope)
-    inner_scope["path"] = rest
-    inner_scope["raw_path"] = rest.encode()
-
-    _token.set(match.group("token"))
-    await _inner_app(inner_scope, receive, send)
+    return mcp
 
 
-async def _plain_response(send, status: int, body: str):
-    data = body.encode("utf-8")
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": [
-            (b"content-type", b"text/plain; charset=utf-8"),
-            (b"content-length", str(len(data)).encode()),
-        ],
-    })
-    await send({"type": "http.response.body", "body": data})
+def build_app(public_url: str):
+    """ログイン画面と互換用の処理を足した ASGI アプリを返す。"""
+    public = public_url.rstrip("/")
+    server = build(public)
+    inner = server.streamable_http_app()
+
+    get_login, post_login = login_page.make_routes(_provider, MOODLE_URL)
+    inner.router.routes.append(Route("/login", get_login, methods=["GET"]))
+    inner.router.routes.append(Route("/login", post_login, methods=["POST"]))
+
+    # RFC 9728。Claude はここを見て認可サーバの場所を知る。
+    async def protected_resource(request):
+        return JSONResponse({
+            "resource": f"{public}/mcp",
+            "authorization_servers": [public],
+            "scopes_supported": [SCOPE],
+            "bearer_methods_supported": ["header"],
+        })
+
+    inner.router.routes.append(
+        Route("/.well-known/oauth-protected-resource", protected_resource, methods=["GET"])
+    )
+
+    mount = server.settings.streamable_http_path.rstrip("/")  # "/mcp"
+    challenge = (
+        f'Bearer resource_metadata="{public}/.well-known/oauth-protected-resource"'
+    ).encode()
+
+    async def app(scope, receive, send):
+        if scope["type"] != "http":
+            await inner(scope, receive, send)
+            return
+
+        # /mcp を /mcp/ に正規化する。リダイレクトさせるとトンネル越しに
+        # http:// のアドレスが返り、接続が壊れることがあるため。
+        if scope.get("path") == mount:
+            scope = dict(scope)
+            scope["path"] = mount + "/"
+            scope["raw_path"] = (mount + "/").encode()
+
+        async def send_wrapper(message):
+            # 401 には認可サーバの場所を必ず添える（MCP の作法）
+            if message["type"] == "http.response.start" and message["status"] == 401:
+                headers = list(message.get("headers") or [])
+                if not any(k.lower() == b"www-authenticate" for k, _ in headers):
+                    headers.append((b"www-authenticate", challenge))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await inner(scope, receive, send_wrapper)
+
+    return app
 
 
 def main():
     parser = argparse.ArgumentParser(description="Moodle リモート MCP サーバ")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--public-url",
+        required=True,
+        help="外から見えるアドレス（例: https://xxxx.trycloudflare.com）",
+    )
     args = parser.parse_args()
+
+    if not MOODLE_URL:
+        raise SystemExit(".env に MOODLE_URL がありません。")
+
+    public = args.public_url.rstrip("/")
+    app = build_app(public)
 
     import uvicorn
 
-    print(f"リモート MCP サーバを起動します: http://{args.host}:{args.port}")
-    print("Claude に登録する URL の形式:")
-    print(f"  http://{args.host}:{args.port}/u/<あなたのMoodleトークン>/mcp")
-    print("（公開時は Cloudflare Tunnel などで HTTPS にしてください）")
+    print("=" * 60)
+    print(" 学生に伝える URL（全員これ1本）")
+    print()
+    print(f"   {public}/mcp")
+    print()
+    print("=" * 60)
 
-    # トークンが URL に含まれるため、アクセスログは出さない
-    uvicorn.run(app, host=args.host, port=args.port, access_log=False)
+    # トークンを含むリクエストが記録されないようアクセスログは出さない
+    uvicorn.run(
+        app, host=args.host, port=args.port, access_log=False,
+        proxy_headers=True, forwarded_allow_ips="*",
+    )
 
 
 if __name__ == "__main__":

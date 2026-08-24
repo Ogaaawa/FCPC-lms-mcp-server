@@ -87,7 +87,7 @@ class SetupApp:
         )
 
         # --- Claude コネクタ ---
-        con = ttk.LabelFrame(outer, text=" Claude に登録する URL ", padding=12)
+        con = ttk.LabelFrame(outer, text=" 学生に配る URL（Claude 用） ", padding=12)
         con.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         con.columnconfigure(1, weight=1)
 
@@ -104,7 +104,7 @@ class SetupApp:
             foreground="#555555",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        ttk.Label(con, text="あなた専用の URL").grid(row=2, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(con, text="登録用の URL").grid(row=2, column=0, sticky="w", padx=(0, 10))
         entry = ttk.Entry(con, textvariable=self.connector, width=34, state="readonly")
         entry.grid(row=2, column=1, sticky="ew", pady=4)
         ttk.Button(con, text="コピー", command=self.copy_connector).grid(
@@ -112,8 +112,8 @@ class SetupApp:
         )
         ttk.Label(
             con,
-            text="この URL はパスワードと同じです。他の人に渡さないでください。",
-            foreground="#c0261e",
+            text="学生は全員この URL を登録します。ログインは Claude が案内します。",
+            foreground="#555555",
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- ボタン ---
@@ -248,7 +248,7 @@ class SetupApp:
         self.root.clipboard_append(url)
         self._log("URL をコピーしました。Claude のコネクタ追加画面に貼り付けてください。", "ok")
 
-    def _show_connector(self, token):
+    def _show_connector(self, token=None):
         """Claude に登録する URL を組み立てて表示する。"""
         base = self.server_base.get().strip()
         if not base:
@@ -256,12 +256,12 @@ class SetupApp:
             self._post("5. サーバーのアドレスが未入力のため URL を作れませんでした。", "muted")
             self._post("   先生から知らされたアドレスを入れて、もう一度実行してください。", "muted")
             return None
-        url = moodle_auth.connector_url(base, token)
+        url = moodle_auth.connector_url(base)
         self.queue.put(("connector", url))
         self._post("")
-        self._post("5. あなた専用の URL を作りました。", "ok")
+        self._post("5. 学生に配る URL はこちらです。", "ok")
         self._post(f"   {url}")
-        self._post("   Claude の「カスタムコネクタを追加」にこの URL を貼り付けてください。", "ok")
+        self._post("   学生はこれを Claude のコネクタ追加画面に貼るだけです。", "ok")
         return moodle_auth.normalize_url(base)
 
     def on_test(self):

@@ -1,6 +1,8 @@
 # 秘密情報 — 絶対にコミットしないこと
 .env
 config.json
+.oauth_key
+.oauth_clients.json
 
 # Python
 __pycache__/

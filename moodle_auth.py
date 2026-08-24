@@ -181,16 +181,15 @@ def update_env(values: dict) -> str:
     return ENV_PATH
 
 
-def connector_url(base_url: str, token: str) -> str:
+def connector_url(base_url: str) -> str:
     """Claude のカスタムコネクタに登録する URL を組み立てる。
 
-    この URL はパスワードと同じ秘密情報。他人に渡さないこと。
+    利用者ごとの区別は OAuth のログインで行うため、URL は全員共通。
     """
     base = (base_url or "").strip().rstrip("/")
     if not base:
         return ""
     if not re.match(r"^https?://", base):
         base = "https://" + base
-    # 末尾に /u/<token>/mcp が付いた形にする
-    base = re.sub(r"/u/[^/]+/mcp/?$", "", base).rstrip("/")
-    return f"{base}/u/{token}/mcp"
+    base = re.sub(r"/mcp/?$", "", base).rstrip("/")
+    return f"{base}/mcp"
