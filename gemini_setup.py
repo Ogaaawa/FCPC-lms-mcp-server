@@ -31,8 +31,13 @@ def python_executable() -> str:
     return sys.executable
 
 
+def gemini_path() -> str | None:
+    """gemini 実行ファイルの絶対パス。Windows では gemini.cmd を解決する。"""
+    return shutil.which("gemini")
+
+
 def is_installed() -> bool:
-    return shutil.which("gemini") is not None
+    return gemini_path() is not None
 
 
 def _load_json(path: str) -> dict:
@@ -92,16 +97,19 @@ def register() -> list:
 
 def verify(timeout: int = 120) -> str:
     """`gemini mcp list` で接続状態を確認して、その行を返す。"""
-    if not is_installed():
+    exe = gemini_path()
+    if exe is None:
         raise GeminiSetupError(
             "Gemini CLI が見つかりません。\n"
             "先に次のコマンドでインストールしてください:\n"
             "    npm install -g @google/gemini-cli"
         )
     try:
+        # Windows の gemini.cmd は名前だけでは起動できないので絶対パスで呼ぶ
         proc = subprocess.run(
-            ["gemini", "mcp", "list"],
+            [exe, "mcp", "list"],
             cwd=ROOT, capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         raise GeminiSetupError("gemini mcp list が時間内に終わりませんでした。")

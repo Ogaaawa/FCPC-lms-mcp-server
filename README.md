@@ -18,11 +18,23 @@ this MCP server can assist following thing,
 **開発者ツールを開いてトークンを探す必要はありません。**
 Moodle のユーザー名とパスワードから自動で取得します。
 
+> **パソコンが必要です。** MCP サーバは手元のパソコンで動くため、
+> スマートフォン・タブレットだけでは利用できません。
+
 ### macOS
 `セットアップ.command` を **ダブルクリック**してください。
-初回は仮想環境の作成とライブラリのインストールが自動で走ります（数分かかることがあります）。
 
-### Windows / うまく開けないとき
+### Windows
+`セットアップ.bat` を **ダブルクリック**してください。
+
+どちらも初回は仮想環境の作成とライブラリのインストールが自動で走ります
+（数分かかることがあります）。事前に必要なのは次の2つだけです。
+
+- [Python](https://www.python.org/downloads/) … Windows では
+  インストール時に **「Add Python to PATH」に必ずチェック**を入れてください
+- [Node.js](https://nodejs.org/) … Gemini から使う場合のみ必要
+
+### うまく開けないとき（手動）
 ```
 1. $ python -m venv venv
 2. $ source venv/bin/activate      # macOS/Linux
@@ -113,6 +125,7 @@ $ gemini mcp list
 - .env : your environment settings（セットアップ画面が自動生成します）
 - setup_gui.py : セットアップ画面（トークン取得〜.env 保存）
 - セットアップ.command : macOS 用のダブルクリック起動
+- セットアップ.bat : Windows 用のダブルクリック起動
 - moodle_auth.py : トークン取得・検証と .env 読み書きの共通処理
 - get_token.py : トークン取得のコマンドライン版
 - gemini_setup.py : Gemini CLI への登録処理
