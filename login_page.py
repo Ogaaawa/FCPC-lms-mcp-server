@@ -1,7 +1,7 @@
-"""Claude から開かれる Moodle ログイン画面。
+"""The Moodle sign-in page that Claude opens during the OAuth flow.
 
-スマートフォンのブラウザで表示される前提なので、余計な要素を置かない。
-入力されたパスワードはトークン取得に一度使うだけで、保存も記録もしない。
+Most students will see this on a phone, so the page stays deliberately plain.
+The password is used once to obtain a token and is never stored or logged.
 """
 import html as html_mod
 
@@ -11,16 +11,16 @@ import moodle_auth
 from moodle_auth import MoodleAuthError
 
 PAGE = """<!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Moodle にログイン</title>
+<title>Sign in to Moodle</title>
 <style>
   :root {{ color-scheme: light dark; }}
   * {{ box-sizing: border-box; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     margin: 0; padding: 24px; line-height: 1.6;
     background: #f6f7f9; color: #1a1a1a;
   }}
@@ -55,26 +55,31 @@ PAGE = """<!doctype html>
 </head>
 <body>
   <div class="card">
-    <h1>Moodle にログイン</h1>
-    <p class="sub">Claude から自分の課題やメッセージを見られるようにします。</p>
+    <h1>Sign in to Moodle</h1>
+    <p class="sub">This lets Claude look up your own assignments and messages.</p>
     {error}
     <form method="post" action="/login">
       <input type="hidden" name="k" value="{key}">
-      <label for="u">ユーザー名</label>
+      <label for="u">Username</label>
       <input id="u" name="username" autocapitalize="none" autocorrect="off"
              autocomplete="username" required>
-      <label for="p">パスワード</label>
+      <label for="p">Password</label>
       <input id="p" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">ログインして許可する</button>
+      <button type="submit">Sign in and allow</button>
     </form>
     <p class="note">
-      Moodle にログインするときと同じユーザー名・パスワードです。<br>
-      パスワードはこの場で1度使うだけで、保存されません。
+      Use the same username and password you use for Moodle.<br>
+      Your password is used once to sign in and is never stored.
     </p>
   </div>
 </body>
 </html>
 """
+
+EXPIRED = (
+    "<p style=\"font-family:sans-serif;padding:24px\">"
+    "This page has expired. Please connect again from Claude.</p>"
+)
 
 
 def render(key: str, error: str = "") -> HTMLResponse:
@@ -83,25 +88,19 @@ def render(key: str, error: str = "") -> HTMLResponse:
 
 
 def make_routes(provider, moodle_url: str):
-    """ログイン画面の GET / POST ハンドラを作る。"""
+    """Build the GET and POST handlers for the sign-in page."""
 
     async def get_login(request):
         key = request.query_params.get("k", "")
         if not provider.get_pending(key):
-            return HTMLResponse(
-                "<p>この画面は期限切れです。Claude でもう一度接続してください。</p>",
-                status_code=400,
-            )
+            return HTMLResponse(EXPIRED, status_code=400)
         return render(key)
 
     async def post_login(request):
         form = await request.form()
         key = str(form.get("k", ""))
         if not provider.get_pending(key):
-            return HTMLResponse(
-                "<p>この画面は期限切れです。Claude でもう一度接続してください。</p>",
-                status_code=400,
-            )
+            return HTMLResponse(EXPIRED, status_code=400)
 
         try:
             token = moodle_auth.fetch_token(
@@ -113,7 +112,7 @@ def make_routes(provider, moodle_url: str):
 
         redirect_to = provider.complete_login(key, token)
         if not redirect_to:
-            return HTMLResponse("<p>接続に失敗しました。やり直してください。</p>", status_code=400)
+            return HTMLResponse(EXPIRED, status_code=400)
         return RedirectResponse(redirect_to, status_code=302)
 
     return get_login, post_login

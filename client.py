@@ -34,7 +34,7 @@ class MCPClient:
             env=None
         )
 
-        # AsyncExitStackで非同期コンテキスト管理
+        # Manage the async contexts with AsyncExitStack
         self.stdio, self.write = await self.exit_stack.enter_async_context(stdio_client(server_params))
         self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
 
@@ -45,7 +45,7 @@ class MCPClient:
         print("\nConnected to server with tools:", [tool.name for tool in tools])
 
     async def close(self):
-        # exit_stackが管理しているすべてを閉じる
+        # Close everything the exit stack is holding
         await self.exit_stack.aclose()
 
 
@@ -54,7 +54,7 @@ class MCPClient:
             {"role": "user", "content": query}
         ]
 
-        # MCPサーバのツール情報取得
+        # Ask the MCP server which tools it has
         tools_resp = await self.session.list_tools()
         openai_tools = []
         for tool in tools_resp.tools:
@@ -67,7 +67,7 @@ class MCPClient:
                 }
             })
 
-        # 1回目のChatCompletion（Tool Calling auto）
+        # First completion, with tool calling enabled
         response = await openai_client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
@@ -78,10 +78,10 @@ class MCPClient:
         message = response.choices[0].message
 
         if not message.tool_calls:
-            # ツール呼び出しなしはそのまま回答を返す
+            # No tool call, so return the answer as it is
             return message.content or ""
 
-        # メッセージ履歴にアシスタントのツール呼び出しを追加
+        # Record the assistant's tool call in the history
         messages.append(message.model_dump(exclude_none=True))
 
         for tool_call in message.tool_calls:
@@ -92,21 +92,21 @@ class MCPClient:
             except json.JSONDecodeError:
                 tool_args = {}
 
-            # ツール呼び出し
+            # Run the tool
             tool_result = await self.session.call_tool(tool_name, tool_args)
 
-            # tool_result.content は List[TextContent] なのでテキストを連結
+            # tool_result.content is a list of TextContent, so join the text
             texts = [c.text for c in tool_result.content if hasattr(c, "text")]
             content_str = "\n".join(texts)
 
-            # メッセージ履歴にツール呼び出し結果を追加
+            # Record the tool result in the history
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "content": content_str
             })
 
-        # 2回目のChatCompletion（結果を踏まえた応答生成）
+        # Second completion, now that the tool result is available
         second_response = await openai_client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages

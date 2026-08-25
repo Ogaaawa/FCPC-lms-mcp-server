@@ -1,13 +1,13 @@
-"""Moodle モバイル launch.php が返す base64 トークンをデコードして .env に保存する。
+"""Decode the base64 token returned by Moodle mobile launch.php.
 
-SSO(Google など)でログインしているユーザーは login/token.php を使えないため、
-公式モバイルアプリと同じ admin/tool/mobile/launch.php フローでトークンを得る。
-その結果は `moodlemobile://token=<base64>` の形で返るので、
-その <base64> 部分をこのスクリプトに渡す。
+Users who sign in through SSO (Google and similar) cannot use
+login/token.php, so they go through admin/tool/mobile/launch.php the same way
+the official mobile app does. That returns `moodlemobile://token=<base64>`;
+pass the <base64> part to this script.
 
-使い方:
-    python decode_token.py <base64文字列>
-    python decode_token.py            # 対話入力
+Usage:
+    python decode_token.py <base64 string>
+    python decode_token.py            # prompts for it
 """
 import base64
 import sys
@@ -18,20 +18,20 @@ from moodle_auth import MoodleAuthError
 
 def decode(raw: str) -> str:
     raw = raw.strip()
-    # URL に付いていた前置きを掃除
+    # Strip the URL prefix if it was pasted in.
     if "token=" in raw:
         raw = raw.split("token=", 1)[1]
     raw = raw.strip().strip("/")
-    # base64 のパディング補正
+    # Restore base64 padding.
     raw += "=" * (-len(raw) % 4)
     try:
         decoded = base64.b64decode(raw).decode("utf-8", errors="replace")
     except Exception as e:
-        raise SystemExit(f"base64 として読み取れませんでした: {e}")
+        raise SystemExit(f"Could not decode that as base64: {e}")
     parts = decoded.split(":::")
     if len(parts) < 2:
-        raise SystemExit(f"想定外の形式です: {decoded!r}")
-    # parts[0]=署名, parts[1]=wstoken, parts[2]=privatetoken(あれば)
+        raise SystemExit(f"Unexpected format: {decoded!r}")
+    # parts[0]=signature, parts[1]=wstoken, parts[2]=privatetoken (if present)
     return parts[1]
 
 
@@ -41,22 +41,22 @@ def main():
     if len(sys.argv) >= 2:
         raw = sys.argv[1]
     else:
-        raw = input("moodlemobile://token=... の token= 以降を貼り付け: ")
+        raw = input("Paste everything after token= in moodlemobile://token=... : ")
 
     token = decode(raw)
-    print(f"\n取り出した wstoken: {token}")
+    print(f"\nExtracted wstoken: {token}")
 
     try:
         info = moodle_auth.verify_token(base_url, token)
-        print(f"サイト: {info.get('sitename')}")
-        print(f"ログイン中: {info.get('fullname')} ({info.get('username')})")
+        print(f"Site: {info.get('sitename')}")
+        print(f"Signed in as: {info.get('fullname')} ({info.get('username')})")
     except MoodleAuthError as e:
         print(f"\n{e}", file=sys.stderr)
         raise SystemExit(1)
 
     path = moodle_auth.update_env({"MOODLE_URL": base_url, "MOODLE_TOKEN": token})
-    print(f"\n設定を保存しました -> {path}")
-    print("これで `python client.py server.py` が使えます。")
+    print(f"\nSaved settings to {path}")
+    print("You can now run: python client.py server.py")
 
 
 if __name__ == "__main__":

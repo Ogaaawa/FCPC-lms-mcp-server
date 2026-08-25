@@ -28,13 +28,14 @@ def call_ollama(model: str, prompt: str) -> str:
     return response.json()["response"]
 
 def build_tools_prompt_from_tools_resp(tools_resp) -> str:
-    prompt = "以下のツールを使うことができます．ツールが必要な場合はツール名と引数をJSON形式で出力してください。\n\nツール一覧:\n"
+    prompt = ("You can use the tools below. If a tool is needed, output the tool "
+              "name and its arguments as JSON.\n\nAvailable tools:\n")
 
     for i, tool in enumerate(tools_resp.tools, 1):
         prompt += f"{i}. name: {tool.name}\n"
         prompt += f"   description: {tool.description.strip()}\n"
 
-        # 入力スキーマの解析
+        # Read the input schema
         schema = tool.inputSchema
         properties = schema.get("properties", {})
         if properties:
@@ -44,10 +45,10 @@ def build_tools_prompt_from_tools_resp(tools_resp) -> str:
                 title_str = meta.get("title", prop)
                 prompt += f"     - {prop} ({type_str}): {title_str}\n"
         else:
-            prompt += "   parameters: なし\n"
+            prompt += "   parameters: none\n"
         prompt += "\n"
 
-    prompt += "ツールが不要な場合は \"none\" とだけ返してください。"
+    prompt += 'If no tool is needed, reply with just "none".'
     return prompt
 
 
@@ -72,7 +73,7 @@ class MCPClient:
             env=None
         )
 
-        # AsyncExitStackで非同期コンテキスト管理
+        # Manage the async contexts with AsyncExitStack
         self.stdio, self.write = await self.exit_stack.enter_async_context(stdio_client(server_params))
         self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
 
@@ -83,42 +84,46 @@ class MCPClient:
         print("\nConnected to server with tools:", [tool.name for tool in tools])
 
     async def close(self):
-        # exit_stackが管理しているすべてを閉じる
+        # Close everything the exit stack is holding
         await self.exit_stack.aclose()
 
 
     async def process_query(self, query: str) -> str:
         try:
-            # 1. ツール一覧を取得
+            # 1. Fetch the tool list
             tools_resp = await self.session.list_tools()
 
-            # 2. ツールと通常回答を含めた出力プロンプトを構築
+            # 2. Build the prompt covering both tool use and a plain answer
             tool_prompt = build_tools_prompt_from_tools_resp(tools_resp)
             full_prompt = (
                 f"{tool_prompt}\n\n"
-                f"ユーザーの入力: {query}\n\n"
-                "出力は JSON 形式で返してください。以下のいずれかの形式とします：\n"
-                "1. ツール使用時: {\"tool_name\": ..., \"parameters\": {...}}\n"
-                "2. ツール不要時: {\"tool_name\": \"none\", \"answer\": \"...\"}"
+                f"User input: {query}\n\n"
+                "Reply as JSON, in one of these two shapes:\n"
+                "1. using a tool: {\"tool_name\": ..., \"parameters\": {...}}\n"
+                "2. no tool needed: {\"tool_name\": \"none\", \"answer\": \"...\"}"
             )
-            # 3. LLM へ問い合わせ
+            # 3. Ask the model
             tool_decision_text = call_ollama(MODEL_NAME, full_prompt)
             tool_data = json.loads(tool_decision_text)
 
             tool_name = tool_data.get("tool_name")
             if tool_name == "none":
-                return tool_data.get("answer", "[ツール不要だが返答がありません]")
+                return tool_data.get("answer", "[no tool needed, but no answer was given]")
 
-            # 4. ツール呼び出し
+            # 4. Run the tool
             tool_args = tool_data.get("parameters", {})
             tool_response = await self.session.call_tool(tool_name, tool_args)
 
-            # 5. ツール結果をもとに最終回答を生成
-            final_prompt = f"ユーザーの質問: {query}\n\nツール「{tool_name}」の結果:\n{tool_response}\n\nこの情報をもとに自然な日本語で返答してください。"
+            # 5. Turn the tool result into the final answer
+            final_prompt = (
+                f"User question: {query}\n\n"
+                f"Result from the \"{tool_name}\" tool:\n{tool_response}\n\n"
+                "Answer the question naturally using this information."
+            )
             return call_ollama(MODEL_NAME, final_prompt)
 
         except Exception as e:
-            return f"[エラー] ツール判定処理中に問題が発生しました: {e}"
+            return f"[error] Something went wrong while choosing a tool: {e}"
 
 
     async def chat_loop(self):

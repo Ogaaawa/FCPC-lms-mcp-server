@@ -1,12 +1,11 @@
-"""Moodle のウェブサービストークンを取得して .env に書き込む（コマンドライン版）。
+"""Fetch a Moodle web service token and save it to .env (command line).
 
-画面つきのセットアップが使える場合は setup_gui.py の方が簡単:
-    python setup_gui.py
-    （macOS なら「セットアップ.command」をダブルクリック）
+The graphical wizard is easier if you can run it:
+    python setup_gui.py      (or double-click setup.command / setup.bat)
 
-使い方:
+Usage:
     python get_token.py
-      -> URL / ユーザー名 / パスワードを対話入力
+      -> prompts for the address, username and password
     python get_token.py https://lms.fcpc.edu.ph <username> <password>
 """
 import sys
@@ -20,23 +19,23 @@ def main():
     if len(sys.argv) >= 4:
         base_url, username, password = sys.argv[1], sys.argv[2], sys.argv[3]
     else:
-        base_url = input(f"Moodle URL [{moodle_auth.DEFAULT_URL}]: ").strip() or moodle_auth.DEFAULT_URL
-        username = input("ユーザー名: ").strip()
-        password = getpass("パスワード（入力しても画面には出ません）: ")
+        base_url = input(f"Moodle address [{moodle_auth.DEFAULT_URL}]: ").strip() or moodle_auth.DEFAULT_URL
+        username = input("Username: ").strip()
+        password = getpass("Password (not shown as you type): ")
 
     try:
         base_url = moodle_auth.normalize_url(base_url)
-        print(f"\n{base_url} に接続しています...")
+        print(f"\nConnecting to {base_url} ...")
         token = moodle_auth.fetch_token(base_url, username, password)
-        print("トークンを取得しました。")
+        print("Got a token.")
 
         info = moodle_auth.verify_token(base_url, token)
-        print(f"サイト: {info.get('sitename')}")
-        print(f"ログイン中: {info.get('fullname')} ({info.get('username')})")
+        print(f"Site: {info.get('sitename')}")
+        print(f"Signed in as: {info.get('fullname')} ({info.get('username')})")
 
         path = moodle_auth.update_env({"MOODLE_URL": base_url, "MOODLE_TOKEN": token})
-        print(f"\n設定を保存しました -> {path}")
-        print("これで `python client.py server.py` が使えます。")
+        print(f"\nSaved settings to {path}")
+        print("You can now run: python client.py server.py")
     except MoodleAuthError as e:
         print(f"\n{e}", file=sys.stderr)
         raise SystemExit(1)

@@ -1,163 +1,184 @@
 # FCPC LMS MCP server
 
-FCPC (First City Providential College) の Moodle LMS を、AI アシスタントから
-操作するための MCP サーバです。
+An MCP server that lets an AI assistant answer questions about a student's own
+Moodle account — assignments due, unread messages, pending quizzes and enrolled
+courses.
 
-A simple MCP server which can support your Moodle manipulation.
-You can use LLM models which are "OpenAI" and localLLM(ollama).
+Students connect from **Claude on the web, on a phone, or on a desktop** by
+registering **one URL**. No software to install, no tokens to copy by hand.
 
-this MCP server can assist following thing,
-- show the due date of your assignments
-- show the unread messages from your moodle
-- show the uncompleted quizes
-- show all courses you take
+Built for First City Providential College, but it works against any Moodle site
+with web services enabled.
 
+## What it can answer
 
-## かんたんセットアップ（推奨）
+- When your assignments are due
+- Unread messages from teachers and classmates
+- Quizzes you have not completed
+- Which courses you are enrolled in
 
-**開発者ツールを開いてトークンを探す必要はありません。**
-Moodle のユーザー名とパスワードから自動で取得します。
-
-> **パソコンが必要です。** MCP サーバは手元のパソコンで動くため、
-> スマートフォン・タブレットだけでは利用できません。
-
-### macOS
-`セットアップ.command` を **ダブルクリック**してください。
-
-### Windows
-`セットアップ.bat` を **ダブルクリック**してください。
-
-どちらも初回は仮想環境の作成とライブラリのインストールが自動で走ります
-（数分かかることがあります）。事前に必要なのは次の2つだけです。
-
-- [Python](https://www.python.org/downloads/) … Windows では
-  インストール時に **「Add Python to PATH」に必ずチェック**を入れてください
-- [Node.js](https://nodejs.org/) … Gemini から使う場合のみ必要
-
-### うまく開けないとき（手動）
 ```
-1. $ python -m venv venv
-2. $ source venv/bin/activate      # macOS/Linux
-   $ .\venv\Scripts\activate       # Windows PowerShell
-3. $ pip install -r requirements.txt
-4. $ python setup_gui.py
+"Do I have any new messages?"
+"What is due this week?"
 ```
 
-セットアップ画面が開くので、
+## Two ways to run it
 
-1. **サイト URL** … 例) `https://lms.fcpc.edu.ph`（貼り付けは `/login/index.php` 付きでも OK）
-2. **ユーザー名 / パスワード** … Moodle にブラウザでログインするときと同じもの
-3. **「接続してセットアップ」** を押す
+| | Remote server | Local server |
+|---|---|---|
+| Who it is for | A class or a whole institution | One person, on their own machine |
+| Client | Claude (web, iOS, Android, desktop) | Any MCP client on that machine |
+| Student sets up | One URL | Nothing, but needs the repo installed |
+| Sign-in | OAuth, handled by Claude | A token in `.env` |
+| Entry point | `remote_server.py` | `server.py` |
 
-これだけでトークンの取得・確認・`.env` への保存まで終わります。
-パスワードはトークン取得に使うだけで、保存されません。
+Most deployments want the remote server.
 
-「AI に質問する機能」（`client.py`）まで使う場合は、同じ画面で
-**OpenAI API キー**と**モデル**（例 `gpt-4o`）も入力してください。省略しても Moodle 連携は動きます。
+---
 
-うまくいかないときは、原因（パスワード間違い・URL 間違い・サイト側の設定など）が
-画面に日本語で表示されます。
+## Remote server (recommended)
 
-> 画面を使わずコマンドラインで済ませたい場合: `python get_token.py`
+### Requirements
 
+- Python 3.11 or newer
+- [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+  (`brew install cloudflared`) or any other way to expose an HTTPS address
+- A Moodle account on the site, used once during setup to record the site address
 
-## 実行方法
-```
-$ source venv/bin/activate
-$ python client.py server.py            # OpenAI を使う場合
-$ python client_localLLM.py server.py   # ollama を使う場合
-```
+### For the administrator
 
-設定が有効かどうかは、セットアップ画面の
-**「保存済み設定で接続テスト」** ボタンでいつでも確認できます。
-
-
-## Claude から使う（スマホ対応・登録は URL 1本だけ）
-
-学生は **URL を1つ登録するだけ**です。パソコンは要りません。
-Claude は無料プランで使えます。
-
-### 先生（サーバーを動かす人）
-
-`サーバー起動.command` を **ダブルクリック**すると URL が表示されます。
+1. Run `setup.command` (macOS) or `setup.bat` (Windows) once and sign in.
+   This writes your Moodle site address to `.env`.
+2. Run `start-server.command`. It prints the URL to hand out:
 
 ```
 https://xxxx.trycloudflare.com/mcp
 ```
 
-これを学生全員に伝えてください。**この画面を閉じるとサーバも止まります。**
-事前に `brew install cloudflared` が必要です。
+Closing that window stops the server, so leave it open while the service is in
+use. Free `trycloudflare.com` addresses change every restart; use a
+[named tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+for a fixed address.
 
-### 学生（スマホだけで完結）
+### For students
 
-1. ブラウザで [claude.ai](https://claude.ai) を開く（無料登録でよい）
-2. 設定 → コネクタ → **カスタムコネクタを追加**
-3. 名前は自由、URL に先生から聞いた **`https://.../mcp`** を貼る
-4. Moodle のログイン画面が自動で開くので、いつもの ID とパスワードでログイン
+1. Open [claude.ai](https://claude.ai) in any browser, including a phone.
+2. Go to **Settings → Connectors → Add custom connector**.
+3. Give it any name and paste the URL you were given.
+4. Claude opens the Moodle sign-in page. Sign in with your usual Moodle
+   username and password.
 
-以上です。あとは Claude アプリ（iPhone / Android）からも使えます。
+That is the whole setup. Afterwards it works in the Claude mobile apps too.
 
-```
-「新着メッセージある？」
-「今週締切の課題を教えて」
-```
+> Connectors can only be **added** from the Claude website, but a phone browser
+> works fine. Once added, they sync to the apps.
 
-> コネクタを**追加**できるのは claude.ai（Web）だけですが、
-> **スマホのブラウザからでも追加できます**。追加後はアプリに同期されます。
-
-### 仕組み
+### How sign-in works
 
 ```
-学生の Claude ──HTTPS──▶ MCP サーバー ──▶ Moodle
-              (OAuth で本人確認)
+Student's Claude ──HTTPS──▶ MCP server ──▶ Moodle
+                 (OAuth)
 ```
 
-学生ごとの区別は **OAuth** で行います。ログインすると、その人の Moodle
-トークンを**暗号化して埋め込んだ**アクセストークンが発行されます。
+Each user is identified by an OAuth sign-in. When a student signs in, their
+Moodle token is **encrypted into the access token itself** and handed back to
+Claude.
 
-- サーバーは Moodle のトークンも学生のパスワードも**保存しません**
-- パスワードはトークン取得に1度使うだけです
-- 他人のデータが見えることはありません
+- The server stores **no** Moodle tokens and **no** passwords
+- A password is used once to obtain a token, then discarded
+- One user can never see another user's data
 
-`.oauth_key`（暗号鍵）と `.oauth_clients.json` は秘密情報です。
-Git には含まれません。
+`.oauth_key` (the encryption key) and `.oauth_clients.json` are secrets. Both
+are excluded from git. Deleting `.oauth_key` signs everyone out.
 
+---
 
-## File architecture
-- .env : your environment settings（セットアップ画面が自動生成します）
-- setup_gui.py : セットアップ画面（トークン取得〜.env 保存）
-- セットアップ.command : macOS 用のダブルクリック起動
-- セットアップ.bat : Windows 用のダブルクリック起動
-- moodle_auth.py : トークン取得・検証と .env 読み書きの共通処理
-- get_token.py : トークン取得のコマンドライン版
-- remote_server.py : Claude コネクタ用のリモート MCP サーバ（OAuth 付き）
-- oauth_provider.py : OAuth 認可サーバ（トークンを保存しない方式）
-- login_page.py : Claude から開かれる Moodle ログイン画面
-- サーバー起動.command : サーバ公開（macOS）
-- gemini_setup.py : Gemini CLI への登録処理（現在は未使用）
-- list_tools.py : 登録済みツールの一覧表示（確認・デモ用）
-- decode_token.py : SSO ログイン利用者向けのトークン取り出し
-- client.py   : process user's query, create a answer via LLM
-- client_localLLM.py   : when using a local LLM(ollama)
-- moodle_client.py : Moodle API クライアント（ユーザーごとにトークンを持つ）
-- server.py : run tools
-- requirements.txt
-- README.md
+## Local server
 
+For running the MCP server on your own machine, over stdio.
+
+1. Run `setup.command` / `setup.bat`, or:
+
+```
+python -m venv venv
+source venv/bin/activate          # macOS/Linux
+.\venv\Scripts\activate           # Windows PowerShell
+pip install -r requirements.txt
+python setup_gui.py
+```
+
+2. Point your MCP client at `server.py`. For example, in Claude Desktop's
+   `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "moodle": {
+      "command": "/path/to/venv/bin/python",
+      "args": ["/path/to/server.py"]
+    }
+  }
+}
+```
+
+To see exactly what the AI receives:
+
+```
+python list_tools.py
+```
+
+There are also two standalone chat clients, `client.py` (OpenAI) and
+`client_localLLM.py` (ollama). Both take the server script as an argument:
+
+```
+python client.py server.py
+```
+
+---
+
+## Notes on Moodle
+
+Some Moodle sites sit behind Cloudflare and reject ordinary HTTPS clients with
+HTTP 403. Requests therefore go through `curl_cffi` with a browser TLS
+fingerprint. This is why the server cannot be reimplemented in, say, Apps
+Script, and why it should run somewhere with a normal-looking network path.
+
+Users who sign in to Moodle through SSO (Google and similar) cannot use
+`login/token.php`. `decode_token.py` covers that case.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `remote_server.py` | Remote MCP server with OAuth, for Claude connectors |
+| `oauth_provider.py` | OAuth authorization server; stores no tokens |
+| `login_page.py` | The Moodle sign-in page Claude opens |
+| `server.py` | Local MCP server over stdio |
+| `moodle_client.py` | Moodle API client, one token per instance |
+| `moodle_auth.py` | Token retrieval and `.env` handling |
+| `setup_gui.py` | Setup wizard |
+| `setup.command` / `setup.bat` | Double-click setup (macOS / Windows) |
+| `start-server.command` | Publish the remote server (macOS) |
+| `list_tools.py` | Print the tools the AI sees |
+| `get_token.py` | Fetch a token from the command line |
+| `decode_token.py` | Token extraction for SSO users |
+| `client.py`, `client_localLLM.py` | Standalone chat clients |
 
 ## Credits
 
-このプロジェクトの MCP サーバ本体（`server.py` / `client.py` / `client_localLLM.py`）は
-**Jiseong JEONG ([@jeongjisung690](https://github.com/jeongjisung690))** によって作成されました。
-オリジナルのリポジトリ: https://github.com/jeongjisung690/Moodle---MCP-server
+The MCP server itself (`server.py`, `client.py`, `client_localLLM.py`) was
+written by **Jiseong JEONG ([@jeongjisung690](https://github.com/jeongjisung690))**.
+Original repository: https://github.com/jeongjisung690/Moodle---MCP-server
 
-本リポジトリでは、上記をベースに以下を追加しています。
+This repository adds:
 
-- Cloudflare 保護下の Moodle に対応（TLS フィンガープリント偽装）
-- ユーザー名・パスワードからのトークン自動取得（`moodle_auth.py` / `get_token.py`）
-- SSO ログイン利用者向けのトークン取り出し（`decode_token.py`）
-- 非エンジニア向けのセットアップ画面（`setup_gui.py` / `セットアップ.command`）
+- Support for Moodle sites behind Cloudflare
+- Automatic token retrieval from a username and password
+- Token extraction for SSO users
+- A setup wizard for non-technical users
+- A remote MCP server with OAuth, so students connect with a single URL
 
 ## License
 
-ライセンス未設定です。利用・再配布をご希望の場合は作者にお問い合わせください。
+No license has been set. Please contact the authors before using or
+redistributing this code.

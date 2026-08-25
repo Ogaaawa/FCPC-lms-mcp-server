@@ -1,16 +1,16 @@
-"""Claude のカスタムコネクタ用のリモート MCP サーバ（streamable HTTP + OAuth）。
+"""Remote MCP server for Claude custom connectors (streamable HTTP + OAuth).
 
-学生は全員 同じ URL を1本登録するだけでよい。
+Everyone registers the same single URL:
 
-    https://<公開ホスト>/mcp
+    https://<public-host>/mcp
 
-Claude が自動で Moodle のログイン画面を開き、ログインするとその人の
-トークンが払い出される。スマートフォンのブラウザだけで完結する。
+Claude opens the Moodle sign-in page by itself, and signing in issues an
+access token for that person. The whole flow works in a phone browser.
 
-Moodle のトークンはサーバに保存しない。アクセストークンに暗号化して
-埋め込み、リクエストごとに復号して使う。
+Moodle tokens are never stored here. Each one is encrypted into the access
+token and decrypted per request.
 
-起動:
+Run with:
     python remote_server.py --public-url https://xxxx.trycloudflare.com
 """
 import argparse
@@ -37,18 +37,18 @@ mcp: FastMCP | None = None
 
 
 def get_client() -> MoodleClient:
-    """いま呼び出している利用者の Moodle クライアントを返す。"""
+    """Return a Moodle client for whoever is making this request."""
     access = get_access_token()
     if access is None:
-        raise RuntimeError("ログインが必要です。Claude でコネクタを接続し直してください。")
+        raise RuntimeError("Not signed in. Reconnect the connector in Claude.")
     token = _provider.unseal(access.token)
     if not token:
-        raise RuntimeError("ログインの有効期限が切れました。接続し直してください。")
+        raise RuntimeError("Your sign-in has expired. Please connect again.")
     return MoodleClient(MOODLE_URL, token, impersonate=IMPERSONATE)
 
 
 def build(public_url: str) -> FastMCP:
-    """OAuth 付きの MCP サーバを組み立てる。"""
+    """Assemble the MCP server with OAuth enabled."""
     global _provider, mcp
 
     _provider = MoodleOAuthProvider(public_url)
@@ -135,7 +135,7 @@ def build(public_url: str) -> FastMCP:
 
 
 def build_app(public_url: str):
-    """ログイン画面と互換用の処理を足した ASGI アプリを返す。"""
+    """Return the ASGI app, with the sign-in page and compatibility shims."""
     public = public_url.rstrip("/")
     server = build(public)
     inner = server.streamable_http_app()
@@ -144,7 +144,7 @@ def build_app(public_url: str):
     inner.router.routes.append(Route("/login", get_login, methods=["GET"]))
     inner.router.routes.append(Route("/login", post_login, methods=["POST"]))
 
-    # RFC 9728。Claude はここを見て認可サーバの場所を知る。
+    # RFC 9728: Claude reads this to find the authorization server.
     async def protected_resource(request):
         return JSONResponse({
             "resource": f"{public}/mcp",
@@ -167,15 +167,16 @@ def build_app(public_url: str):
             await inner(scope, receive, send)
             return
 
-        # /mcp を /mcp/ に正規化する。リダイレクトさせるとトンネル越しに
-        # http:// のアドレスが返り、接続が壊れることがあるため。
+        # Normalise /mcp to /mcp/ ourselves. Letting Starlette redirect
+        # hands back an http:// address through the tunnel, which breaks
+        # the connection.
         if scope.get("path") == mount:
             scope = dict(scope)
             scope["path"] = mount + "/"
             scope["raw_path"] = (mount + "/").encode()
 
         async def send_wrapper(message):
-            # 401 には認可サーバの場所を必ず添える（MCP の作法）
+            # Every 401 must point at the authorization server.
             if message["type"] == "http.response.start" and message["status"] == 401:
                 headers = list(message.get("headers") or [])
                 if not any(k.lower() == b"www-authenticate" for k, _ in headers):
@@ -189,18 +190,18 @@ def build_app(public_url: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Moodle リモート MCP サーバ")
+    parser = argparse.ArgumentParser(description="Moodle remote MCP server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--public-url",
         required=True,
-        help="外から見えるアドレス（例: https://xxxx.trycloudflare.com）",
+        help="Address this server is reachable at from the internet.",
     )
     args = parser.parse_args()
 
     if not MOODLE_URL:
-        raise SystemExit(".env に MOODLE_URL がありません。")
+        raise SystemExit("MOODLE_URL is missing from .env.")
 
     public = args.public_url.rstrip("/")
     app = build_app(public)
@@ -208,13 +209,13 @@ def main():
     import uvicorn
 
     print("=" * 60)
-    print(" 学生に伝える URL（全員これ1本）")
+    print(" Give this URL to your students (the same one for everyone)")
     print()
     print(f"   {public}/mcp")
     print()
     print("=" * 60)
 
-    # トークンを含むリクエストが記録されないようアクセスログは出さない
+    # Access logs are off so that tokens never end up in a log file.
     uvicorn.run(
         app, host=args.host, port=args.port, access_log=False,
         proxy_headers=True, forwarded_allow_ips="*",

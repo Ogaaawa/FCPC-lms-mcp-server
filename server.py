@@ -1,8 +1,8 @@
-"""Moodle を操作する MCP サーバ（stdio）。
+"""MCP server for Moodle, over stdio.
 
-各自のパソコンで動かす想定なので、.env の1人ぶんのトークンを使う。
-Moodle 側の処理は moodle_client.py に置いてあり、複数ユーザーを
-扱うサーバ（Chat ボットなど）からも同じものを再利用できる。
+Meant to run on one person's own machine, so it uses the single token from
+.env. The Moodle logic lives in moodle_client.py and is shared with
+remote_server.py, which serves many users at once.
 """
 import os
 
@@ -21,11 +21,11 @@ mcp = FastMCP("moodle_assistant")
 
 
 def get_client() -> MoodleClient:
-    """.env の設定からクライアントを作る。"""
+    """Build a client from the settings in .env."""
     if not MOODLE_URL or not TOKEN:
         raise RuntimeError(
-            ".env に MOODLE_URL と MOODLE_TOKEN がありません。"
-            "セットアップ画面（setup_gui.py）を実行してください。"
+            "MOODLE_URL and MOODLE_TOKEN are missing from .env. "
+            "Run the setup wizard (setup_gui.py) first."
         )
     return MoodleClient(MOODLE_URL, TOKEN, impersonate=IMPERSONATE)
 

@@ -1,8 +1,10 @@
-"""Moodle のトークン取得・検証と .env の読み書きをまとめたモジュール。
+"""Moodle token retrieval and .env handling.
 
-setup_gui.py（GUI ウィザード）と get_token.py（CLI）の両方から使う。
-Cloudflare で保護された Moodle でも、ブラウザの TLS フィンガープリントを
-偽装することで token.php / webservice を叩ける。
+Used by the setup wizard (setup_gui.py), the command line helper
+(get_token.py) and the OAuth login page (login_page.py).
+
+Moodle sites behind Cloudflare reject ordinary HTTPS clients, so requests
+here go through curl_cffi with a browser TLS fingerprint.
 """
 import os
 import re
@@ -15,41 +17,47 @@ DEFAULT_URL = "https://lms.fcpc.edu.ph"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(ROOT, ".env")
 
-# Moodle が返すエラーコードを、素人にも分かる日本語に翻訳する
+# Moodle error codes translated into something a student can act on.
 ERROR_MESSAGES = {
     "invalidlogin": (
-        "ユーザー名またはパスワードが違います。\n"
-        "Moodle にブラウザでログインするときと同じものを入力してください。"
+        "Wrong username or password.\n"
+        "Use the same details you use to log in to Moodle in a browser."
     ),
     "enablewsdescription": (
-        "この Moodle サイトではウェブサービスが無効になっています。\n"
-        "サイト管理者に「モバイルアプリ用のウェブサービスを有効にしてほしい」と依頼してください。"
+        "Web services are turned off on this Moodle site.\n"
+        "Ask your Moodle administrator to enable the mobile app web service."
     ),
-    "usernotconfirmed": "アカウントがまだ確認済みになっていません。確認メールのリンクを開いてください。",
-    "sitemaintenance": "Moodle サイトが現在メンテナンス中です。しばらく待ってから再度お試しください。",
+    "usernotconfirmed": (
+        "Your account has not been confirmed yet.\n"
+        "Open the confirmation link in the email Moodle sent you."
+    ),
+    "sitemaintenance": (
+        "The Moodle site is in maintenance mode. Please try again later."
+    ),
     "forcepasswordchangenotice": (
-        "パスワードの変更を求められています。\n"
-        "先にブラウザで Moodle にログインしてパスワードを変更してください。"
+        "Moodle is asking you to change your password.\n"
+        "Log in to Moodle in a browser and change it first."
     ),
     "potentialidporsso": (
-        "このアカウントは外部ログイン（Google ログインなど）を使っている可能性があります。\n"
-        "Moodle 本体のユーザー名とパスワードが必要です。"
+        "This account appears to sign in through an external provider "
+        "(for example Google).\n"
+        "You need a Moodle username and password to continue."
     ),
 }
 
 
 class MoodleAuthError(Exception):
-    """利用者にそのまま見せられる日本語メッセージを持つ例外。"""
+    """Carries a message that can be shown to the user as-is."""
 
 
 def normalize_url(base_url: str) -> str:
-    """入力された URL を整形する。https:// の付け忘れや末尾スラッシュを許容する。"""
+    """Tidy up a site address: add https://, drop trailing paths and slashes."""
     url = (base_url or "").strip()
     if not url:
-        raise MoodleAuthError("Moodle の URL を入力してください。")
+        raise MoodleAuthError("Please enter your Moodle address.")
     if not re.match(r"^https?://", url):
         url = "https://" + url
-    # 「.../login/index.php」などを貼り付けられても大丈夫にする
+    # Tolerate someone pasting ".../login/index.php" or a course URL.
     url = re.sub(r"/(login|my|course)(/.*)?$", "", url.rstrip("/"))
     return url.rstrip("/")
 
@@ -59,38 +67,37 @@ def _get(url: str, params: dict):
         return requests.get(url, params=params, impersonate=IMPERSONATE, timeout=30)
     except Exception as e:
         raise MoodleAuthError(
-            "Moodle に接続できませんでした。\n"
-            "・インターネットに繋がっているか\n"
-            "・URL が正しいか（例: https://lms.fcpc.edu.ph）\n"
-            "を確認してください。\n\n"
-            f"詳細: {e}"
+            "Could not reach Moodle.\n"
+            "Check that you are online and that the address is correct "
+            "(for example https://lms.fcpc.edu.ph).\n\n"
+            f"Details: {e}"
         )
 
 
 def _parse_json(response, url: str):
     if response.status_code != 200:
         raise MoodleAuthError(
-            f"Moodle が エラー {response.status_code} を返しました。\n"
-            f"URL が正しいか確認してください。\n\n詳細: {response.text[:200]}"
+            f"Moodle returned error {response.status_code}.\n"
+            f"Check that the address is correct.\n\nDetails: {response.text[:200]}"
         )
     try:
         return response.json()
     except Exception:
         raise MoodleAuthError(
-            "Moodle から想定外の応答が返りました（JSON ではありません）。\n"
-            "セキュリティ機能（Cloudflare）に遮断された可能性があります。\n"
-            "少し時間を置いてから再度お試しください。\n\n"
-            f"詳細: {response.text[:200]}"
+            "Moodle returned an unexpected response (not JSON).\n"
+            "It may have been blocked by the site's security layer. "
+            "Please wait a moment and try again.\n\n"
+            f"Details: {response.text[:200]}"
         )
 
 
 def fetch_token(base_url: str, username: str, password: str) -> str:
-    """ユーザー名とパスワードからウェブサービストークンを取得する。"""
+    """Exchange a username and password for a web service token."""
     base_url = normalize_url(base_url)
     if not username.strip():
-        raise MoodleAuthError("ユーザー名を入力してください。")
+        raise MoodleAuthError("Please enter your username.")
     if not password:
-        raise MoodleAuthError("パスワードを入力してください。")
+        raise MoodleAuthError("Please enter your password.")
 
     url = f"{base_url}/login/token.php"
     r = _get(url, {"username": username.strip(), "password": password, "service": SERVICE})
@@ -103,13 +110,13 @@ def fetch_token(base_url: str, username: str, password: str) -> str:
     if code in ERROR_MESSAGES:
         raise MoodleAuthError(ERROR_MESSAGES[code])
     raise MoodleAuthError(
-        "トークンを取得できませんでした。\n\n"
-        f"Moodle からの応答: {(data or {}).get('error') or data}"
+        "Could not get a token.\n\n"
+        f"Moodle said: {(data or {}).get('error') or data}"
     )
 
 
 def verify_token(base_url: str, token: str) -> dict:
-    """トークンが本当に使えるか確認し、サイト情報を返す。"""
+    """Check that a token works and return the site information."""
     base_url = normalize_url(base_url)
     url = f"{base_url}/webservice/rest/server.php"
     r = _get(
@@ -126,18 +133,20 @@ def verify_token(base_url: str, token: str) -> dict:
         code = data.get("errorcode", "")
         if code == "invalidtoken":
             raise MoodleAuthError(
-                "トークンが無効か、有効期限が切れています。\n"
-                "セットアップをやり直してトークンを取り直してください。"
+                "That token is invalid or has expired.\n"
+                "Run setup again to get a new one."
             )
-        raise MoodleAuthError(f"Moodle エラー [{code}]: {data.get('message')}")
+        raise MoodleAuthError(f"Moodle error [{code}]: {data.get('message')}")
 
     if not isinstance(data, dict) or "userid" not in data:
-        raise MoodleAuthError(f"サイト情報を取得できませんでした。\n\n詳細: {str(data)[:200]}")
+        raise MoodleAuthError(
+            f"Could not read the site information.\n\nDetails: {str(data)[:200]}"
+        )
     return data
 
 
 def read_env() -> dict:
-    """.env を読み込んで辞書で返す（無ければ空）。"""
+    """Read .env into a dict. Returns an empty dict if there is no file."""
     values = {}
     if not os.path.exists(ENV_PATH):
         return values
@@ -152,13 +161,13 @@ def read_env() -> dict:
 
 
 def update_env(values: dict) -> str:
-    """.env の指定キーを更新（無ければ追記）。コメントや他の行はそのまま残す。"""
+    """Update the given keys in .env, keeping comments and other lines intact."""
     lines = []
     if os.path.exists(ENV_PATH):
         with open(ENV_PATH, encoding="utf-8") as f:
             lines = f.read().splitlines()
     else:
-        # 初回は .env.example を雛形にして、説明コメントごと引き継ぐ
+        # First run: start from .env.example so the comments carry over.
         example = os.path.join(os.path.dirname(ENV_PATH), ".env.example")
         if os.path.exists(example):
             with open(example, encoding="utf-8") as f:
@@ -182,9 +191,9 @@ def update_env(values: dict) -> str:
 
 
 def connector_url(base_url: str) -> str:
-    """Claude のカスタムコネクタに登録する URL を組み立てる。
+    """Build the URL students paste into Claude's custom connector dialog.
 
-    利用者ごとの区別は OAuth のログインで行うため、URL は全員共通。
+    The URL is the same for everyone; users are told apart by the OAuth login.
     """
     base = (base_url or "").strip().rstrip("/")
     if not base:

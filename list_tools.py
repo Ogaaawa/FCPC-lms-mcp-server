@@ -1,9 +1,9 @@
-"""この MCP サーバが公開しているツールを一覧表示する（デモ・確認用）。
+"""Print the tools this MCP server exposes.
 
-Gemini や Claude などの AI が「どんな道具が使えるか」を知るために
-受け取っている情報そのものを表示する。
+Shows exactly what an AI assistant receives when it asks what tools are
+available. Useful for demos and for checking a configuration change.
 
-使い方:
+Usage:
     python list_tools.py
 """
 import asyncio
@@ -34,7 +34,7 @@ async def main() -> None:
         cwd=ROOT,
         env=dict(os.environ),
     )
-    # サーバのログ出力はデモの邪魔になるので捨てる
+    # Discard the server log so the output stays readable.
     devnull = open(os.devnull, "w")
     try:
         async with stdio_client(params, errlog=devnull) as (read, write):
@@ -44,24 +44,24 @@ async def main() -> None:
     finally:
         devnull.close()
 
-    print(f"\n登録されているツール: {len(tools)} 個\n")
+    print(f"\n{len(tools)} tools registered\n")
     for i, tool in enumerate(tools, 1):
         print("=" * 68)
         print(f"{i}. {tool.name}")
         print("=" * 68)
 
         description = (tool.description or "").strip()
-        print("【AI が読む説明】")
-        for line in description.splitlines() or ["(説明なし)"]:
+        print("  Description the AI reads:")
+        for line in description.splitlines() or ["(no description)"]:
             print(f"  {line}")
 
         props = (tool.inputSchema or {}).get("properties") or {}
         required = set((tool.inputSchema or {}).get("required") or [])
-        print("【引数】")
+        print("  Arguments:")
         if not props:
-            print("  なし")
+            print("    (none)")
         for name, spec in props.items():
-            mark = "必須" if name in required else "任意"
+            mark = "required" if name in required else "optional"
             print(f"  - {name} ({mark}): {json.dumps(spec, ensure_ascii=False)}")
         print()
 

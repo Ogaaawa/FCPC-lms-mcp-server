@@ -1,13 +1,13 @@
-"""Moodle の Web サービスを叩くクライアント。
+"""Client for the Moodle web service API.
 
-トークンをモジュール変数ではなくインスタンスに持たせているため、
-1プロセスで複数ユーザーぶんを扱える。Chat ボットのような
-サーバ常駐型では、リクエストごとに利用者のトークンで生成する。
+The token lives on the instance rather than in a module-level variable, so a
+single process can serve many users at once. A long-running server creates one
+client per request, using that user's own token:
 
-    client = MoodleClient(url, その学生のトークン)
+    client = MoodleClient(url, that_students_token)
     print(await client.check_new_messages())
 
-ローカルの MCP サーバ（server.py）は .env の1人ぶんで使う。
+The local MCP server (server.py) just uses the single token from .env.
 """
 import html
 import re
@@ -16,43 +16,43 @@ from datetime import datetime, timedelta, timezone
 
 from curl_cffi.requests import AsyncSession
 
-# Cloudflare 対策: ブラウザの TLS フィンガープリントを偽装する。
-# 標準の HTTPS クライアントでは 403 を返されることを実測で確認済み。
+# Cloudflare protection: the TLS fingerprint of a real browser is required.
+# A standard HTTPS client gets HTTP 403 back - verified against the live site.
 DEFAULT_IMPERSONATE = "chrome131"
 JST = timezone(timedelta(hours=9))
 
 
 def unix_to_jst_str(unix_ts) -> str:
-    """UNIX 時刻を JST の文字列にする。"""
+    """Format a UNIX timestamp as a JST date and time."""
     if not unix_ts:
         return ""
     return datetime.fromtimestamp(unix_ts, tz=JST).strftime("%Y-%m-%d %H:%M:%S JST")
 
 
 def strip_html(text: str) -> str:
-    """Moodle が返す HTML 断片をプレーンテキストにする。"""
+    """Turn the HTML fragments Moodle returns into plain text."""
     return html.unescape(re.sub(r"<[^>]+>", "", text or "")).strip()
 
 
 class MoodleError(Exception):
-    """Moodle 側が明示的にエラーを返したとき。"""
+    """Raised when Moodle reports an explicit failure."""
 
 
 class MoodleClient:
     def __init__(self, base_url: str, token: str, impersonate: str = DEFAULT_IMPERSONATE):
         if not base_url or not token:
-            raise ValueError("base_url と token は必須です")
+            raise ValueError("base_url and token are both required")
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.impersonate = impersonate
-        self._userid = None  # 同一インスタンス内で使い回す
+        self._userid = None  # cached for the lifetime of this instance
 
     @property
     def endpoint(self) -> str:
         return f"{self.base_url}/webservice/rest/server.php"
 
     async def call(self, wsfunction: str, **params):
-        """Web サービスを1回呼ぶ。失敗時は None を返す（例外にしない）。"""
+        """Call one web service function. Returns None on failure."""
         query = {
             "wstoken": self.token,
             "moodlewsrestformat": "json",
@@ -79,11 +79,11 @@ class MoodleClient:
         try:
             data = response.json()
         except Exception:
-            # Cloudflare のチャレンジ HTML などが返ると JSON 化に失敗する
+            # A Cloudflare challenge page is HTML, not JSON.
             print(f"Non-JSON response :: {response.text[:200]}", file=sys.stderr)
             return None
 
-        # Moodle はエラーもステータス 200 + JSON で返す
+        # Moodle reports errors as HTTP 200 with an "exception" key.
         if isinstance(data, dict) and data.get("exception"):
             print(
                 f"Moodle error [{data.get('errorcode')}]: {data.get('message')}",
@@ -93,7 +93,7 @@ class MoodleClient:
 
         return data
 
-    # --- 基本情報 -------------------------------------------------------
+    # --- basics ---------------------------------------------------------
     async def site_info(self):
         return await self.call("core_webservice_get_site_info")
 
@@ -102,26 +102,26 @@ class MoodleClient:
             return self._userid
         data = await self.site_info()
         if not data or "userid" not in data:
-            raise MoodleError("ユーザー情報を取得できませんでした。")
+            raise MoodleError("Could not read your Moodle account details.")
         self._userid = data["userid"]
         return self._userid
 
-    # --- 各機能 ---------------------------------------------------------
+    # --- features -------------------------------------------------------
     async def get_courses(self) -> str:
         userid = await self.get_userid()
         courses = await self.call("core_enrol_get_users_courses", userid=userid)
         if courses is None:
-            return "コース情報の取得に失敗しました。"
+            return "Could not retrieve your courses."
         if not courses:
-            return "登録されているコースはありません。"
-        return "所属コース一覧:\n" + "\n".join(
+            return "You are not enrolled in any courses."
+        return "Your courses:\n" + "\n".join(
             f"{c['fullname']} (ID: {c['id']})" for c in courses
         )
 
     async def get_due_assignments(self, days: int) -> str:
         data = await self.call("mod_assign_get_assignments")
         if data is None:
-            return "課題情報の取得に失敗しました。"
+            return "Could not retrieve your assignments."
 
         now = datetime.now()
         deadline = now + timedelta(days=days)
@@ -132,11 +132,13 @@ class MoodleClient:
                 due = datetime.fromtimestamp(ts) if ts else None
                 if due and now <= due <= deadline:
                     results.append(
-                        f"コース: {course.get('fullname')}\n"
-                        f"課題名: {a.get('name')}\n"
-                        f"〆切: {due.strftime('%Y-%m-%d')}\n"
+                        f"Course: {course.get('fullname')}\n"
+                        f"Assignment: {a.get('name')}\n"
+                        f"Due: {due.strftime('%Y-%m-%d')}\n"
                     )
-        return "\n\n".join(results) if results else "指定期間内の課題は見つかりませんでした。"
+        if not results:
+            return f"Nothing is due in the next {days} days."
+        return "\n\n".join(results)
 
     async def check_new_messages(self) -> str:
         userid = await self.get_userid()
@@ -144,35 +146,36 @@ class MoodleClient:
             "core_message_get_conversations", userid=userid, limitfrom=0, limitnum=10
         )
         if not data or "conversations" not in data:
-            return "メッセージの取得に失敗しました。"
+            return "Could not retrieve your messages."
 
         unread = []
         for conv in data["conversations"]:
             if conv.get("isread", True):
                 continue
 
-            # members が空のこともあるので添字アクセスしない
+            # "members" can come back empty, so never index into it blindly.
             members = conv.get("members") or []
-            sender = members[0].get("fullname", "不明") if members else "不明"
+            sender = members[0].get("fullname", "Unknown") if members else "Unknown"
             count = conv.get("unreadcount") or 0
 
-            # 会話ごとに組み立てる（前の会話の値を持ち越さない）
+            # Build each conversation from scratch so nothing carries over
+            # from the previous one.
             lines = []
             for msg in conv.get("messages") or []:
                 text = strip_html(msg.get("text"))
                 sent_at = unix_to_jst_str(msg.get("timecreated"))
                 lines.append(f"  [{sent_at}] {text}" if sent_at else f"  {text}")
 
-            body = "\n".join(lines) if lines else "  (本文を取得できませんでした)"
-            unread.append(f"送信者: {sender}（未読 {count} 件）\n{body}")
+            body = "\n".join(lines) if lines else "  (message body unavailable)"
+            unread.append(f"From: {sender} ({count} unread)\n{body}")
 
-        return "\n\n".join(unread) if unread else "未読メッセージはありません。"
+        return "\n\n".join(unread) if unread else "You have no unread messages."
 
     async def get_pending_quizzes(self, days: int | None = None) -> str:
         userid = await self.get_userid()
         courses = await self.call("core_enrol_get_users_courses", userid=userid)
         if courses is None:
-            return "コース情報の取得に失敗しました。"
+            return "Could not retrieve your courses."
 
         now = datetime.now()
         deadline = now + timedelta(days=days) if days else None
@@ -198,14 +201,14 @@ class MoodleClient:
                     continue
                 attempts = attempts_resp.get("attempts", [])
 
-                # 未着手、または進行中／期限超過のものだけ
+                # Pending means: never attempted, or still in progress/overdue.
                 if not attempts or any(
                     a["state"] in ("inprogress", "overdue") for a in attempts
                 ):
                     pending.append(
-                        f"コース: {course['fullname']}\n"
-                        f"小テスト名: {quiz['name']}\n"
-                        f"〆切: {due.strftime('%Y-%m-%d') if due else 'なし'}"
+                        f"Course: {course['fullname']}\n"
+                        f"Quiz: {quiz['name']}\n"
+                        f"Due: {due.strftime('%Y-%m-%d') if due else 'no deadline'}"
                     )
 
-        return "\n\n".join(pending) if pending else "未完了の小テストはありません。"
+        return "\n\n".join(pending) if pending else "You have no pending quizzes."

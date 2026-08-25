@@ -1,4 +1,4 @@
-# 秘密情報 — 絶対にコミットしないこと
+# Secrets - never commit these
 .env
 config.json
 .oauth_key
@@ -14,5 +14,5 @@ venv/
 # macOS
 .DS_Store
 
-# バックアップ
+# Backups
 *.bak

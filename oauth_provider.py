@@ -1,12 +1,12 @@
-"""Claude のコネクタ登録を「URL 1本だけ」で済ませるための OAuth 認可サーバ。
+"""OAuth authorization server, so registering the connector is just one URL.
 
-学生は全員 同じ URL を登録する。Claude が自動でログイン画面を開き、
-そこで Moodle にログインすると、その人のトークンが払い出される。
-スマートフォンのブラウザだけで完結する。
+Every student registers the same URL. Claude then opens the Moodle sign-in
+page by itself, and signing in issues an access token for that person. The
+whole flow works in a phone browser.
 
-Moodle のトークンはサーバに保存しない。アクセストークン自体に
-暗号化して埋め込み、必要なときに復号して使う（ステートレス）。
-そのための鍵だけ .oauth_key に保存する。
+Moodle tokens are never stored on the server. Each one is encrypted into the
+access token itself and decrypted when needed, which keeps this stateless.
+Only the encryption key is kept on disk, in .oauth_key.
 """
 import json
 import os
@@ -28,14 +28,17 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 KEY_PATH = os.path.join(ROOT, ".oauth_key")
 CLIENTS_PATH = os.path.join(ROOT, ".oauth_clients.json")
 
-ACCESS_TOKEN_TTL = 60 * 60 * 24 * 30  # 30日
-REFRESH_TOKEN_TTL = 60 * 60 * 24 * 180  # 180日
-CODE_TTL = 300  # 認可コードは5分で失効
+ACCESS_TOKEN_TTL = 60 * 60 * 24 * 30  # 30 days
+REFRESH_TOKEN_TTL = 60 * 60 * 24 * 180  # 180 days
+CODE_TTL = 300  # authorization codes expire after 5 minutes
 SCOPE = "moodle"
 
 
 def _load_key() -> bytes:
-    """暗号鍵を読む。無ければ作る。再起動してもログインが切れないよう保存する。"""
+    """Load the encryption key, creating it on first run.
+
+    It is kept on disk so that restarting the server does not sign everyone out.
+    """
     if os.path.exists(KEY_PATH):
         with open(KEY_PATH, "rb") as f:
             key = f.read().strip()
@@ -49,23 +52,23 @@ def _load_key() -> bytes:
 
 
 class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
-    """Moodle のログインを OAuth の認可として扱う。"""
+    """Treats signing in to Moodle as the OAuth authorization step."""
 
     def __init__(self, issuer_url: str):
         self.issuer_url = issuer_url.rstrip("/")
         self._fernet = Fernet(_load_key())
         self._clients: dict[str, OAuthClientInformationFull] = {}
-        self._codes: dict[str, tuple[AuthorizationCode, str]] = {}  # code -> (情報, Moodleトークン)
+        self._codes: dict[str, tuple[AuthorizationCode, str]] = {}  # code -> (info, moodle token)
         self._load_clients()
 
-    # --- Moodle トークンの出し入れ ------------------------------------
+    # --- sealing and unsealing the Moodle token -------------------------
     def seal(self, moodle_token: str, kind: str = "access") -> str:
-        """Moodle トークンを暗号化してトークン文字列にする。"""
+        """Encrypt a Moodle token into an opaque token string."""
         payload = json.dumps({"t": moodle_token, "k": kind, "iat": int(time.time())}).encode()
         return self._fernet.encrypt(payload).decode()
 
     def unseal(self, token: str, kind: str = "access") -> str | None:
-        """トークン文字列から Moodle トークンを取り出す。種別が違えば拒否する。"""
+        """Recover the Moodle token, rejecting a token of the wrong kind."""
         ttl = ACCESS_TOKEN_TTL if kind == "access" else REFRESH_TOKEN_TTL
         try:
             data = json.loads(self._fernet.decrypt(token.encode(), ttl=ttl))
@@ -75,7 +78,7 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
             return None
         return data.get("t")
 
-    # --- クライアント（Claude 側）の登録 --------------------------------
+    # --- client registration (Claude registers itself) ------------------
     def _load_clients(self) -> None:
         if not os.path.exists(CLIENTS_PATH):
             return
@@ -85,7 +88,7 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
             for cid, info in raw.items():
                 self._clients[cid] = OAuthClientInformationFull.model_validate(info)
         except Exception:
-            # 壊れていても起動は止めない。Claude が再登録すれば復旧する。
+            # A corrupt file must not stop startup; Claude re-registers.
             self._clients = {}
 
     def _save_clients(self) -> None:
@@ -101,9 +104,9 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
         self._clients[client_info.client_id] = client_info
         self._save_clients()
 
-    # --- 認可フロー -----------------------------------------------------
+    # --- authorization flow ---------------------------------------------
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
-        """ログイン画面へ誘導する URL を返す。"""
+        """Return the URL of our own sign-in page."""
         pending = secrets.token_urlsafe(24)
         self._pending = getattr(self, "_pending", {})
         self._purge()
@@ -123,7 +126,7 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
         return getattr(self, "_pending", {}).get(key)
 
     def complete_login(self, key: str, moodle_token: str) -> str | None:
-        """ログイン成功。認可コードを発行して、戻り先 URL を返す。"""
+        """Sign-in succeeded: issue a code and return where to redirect."""
         pending = getattr(self, "_pending", {}).pop(key, None)
         if not pending:
             return None
@@ -169,9 +172,9 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        entry = self._codes.pop(authorization_code.code, None)  # 1回限り
+        entry = self._codes.pop(authorization_code.code, None)  # single use
         if not entry:
-            raise ValueError("認可コードが無効です。")
+            raise ValueError("Invalid authorization code.")
         _, moodle_token = entry
         return self._issue(moodle_token, authorization_code.scopes)
 
@@ -182,7 +185,7 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
             token=token,
             client_id="moodle",
             scopes=[SCOPE],
-            expires_at=None,  # 暗号化時の ttl で判定している
+            expires_at=None,  # expiry is enforced by the encryption ttl
         )
 
     def _issue(self, moodle_token: str, scopes: list[str]) -> OAuthToken:
@@ -208,9 +211,9 @@ class MoodleOAuthProvider(OAuthAuthorizationServerProvider):
     ) -> OAuthToken:
         moodle_token = self.unseal(refresh_token.token, "refresh")
         if not moodle_token:
-            raise ValueError("リフレッシュトークンが無効です。")
+            raise ValueError("Invalid refresh token.")
         return self._issue(moodle_token, scopes or [SCOPE])
 
     async def revoke_token(self, token) -> None:
-        # ステートレスなので、失効させるには Moodle 側でトークンを作り直す。
+        # Stateless by design: to revoke, reset the token in Moodle itself.
         return None
