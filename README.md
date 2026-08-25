@@ -12,14 +12,21 @@ with web services enabled.
 
 ## What it can answer
 
-- When your assignments are due
+- Everything with a deadline in the coming days, in one list
 - Unread messages from teachers and classmates
-- Quizzes you have not completed
+- Notifications: reminders, grading notices and alerts
+- The overall grade in each course
+- Assignments due, and quizzes not yet completed
+- Announcements posted by teachers
+- What is inside a course: sections, activities and links
 - Which courses you are enrolled in
 
 ```
 "Do I have any new messages?"
 "What is due this week?"
+"How am I doing in my courses?"
+"Did I miss anything?"
+"What are we covering in week 3 of History?"
 ```
 
 ## Two ways to run it
@@ -69,6 +76,12 @@ for a fixed address.
    username and password.
 
 That is the whole setup. Afterwards it works in the Claude mobile apps too.
+
+The same page has a second box that takes a web service token instead. Use it
+when the account has no Moodle password — a Google or other SSO account — or to
+demonstrate the connector with a token you already hold. It accepts the plain
+token, or the whole `moodlemobile://token=...` value from
+`admin/tool/mobile/launch.php`.
 
 > Connectors can only be **added** from the Claude website, but a phone browser
 > works fine. Once added, they sync to the apps.
@@ -154,6 +167,11 @@ repeating it on a phone.
 Run it after installing, after changing the code, and on the machine that will
 host the server.
 
+It cannot tell "no assignments are due" apart from "the tool is broken", because
+both look the same against an empty account. `TEST_DATA.md` specifies the
+courses, activities and accounts to create in Moodle so that every answer has
+something to be right about.
+
 ---
 
 ## Notes on Moodle
@@ -163,8 +181,19 @@ HTTP 403. Requests therefore go through `curl_cffi` with a browser TLS
 fingerprint. This is why the server cannot be reimplemented in, say, Apps
 Script, and why it should run somewhere with a normal-looking network path.
 
-Users who sign in to Moodle through SSO (Google and similar) cannot use
-`login/token.php`. `decode_token.py` covers that case.
+### Sites that use SSO
+
+If students sign in to Moodle through Google or another identity provider, they
+have no Moodle password, so `login/token.php` cannot issue them a token. The
+mobile route `admin/tool/mobile/launch.php` does issue one, but Moodle returns
+it only as `moodlemobile://token=...` and validates the scheme against
+`^[a-zA-Z][a-zA-Z0-9-+.]*$`, so a web application cannot receive it. Only a
+native app can. `decode_token.py` decodes that value if you can capture it by
+hand.
+
+On such a site the administrator has to issue tokens. `ADMIN_REQUEST.md` is a
+document you can hand to them; it sets out the two workable arrangements and
+their security trade-offs.
 
 ## Files
 
@@ -183,6 +212,11 @@ Users who sign in to Moodle through SSO (Google and similar) cannot use
 | `list_tools.py` | Print the tools the AI sees |
 | `get_token.py` | Fetch a token from the command line |
 | `decode_token.py` | Token extraction for SSO users |
+| `ADMIN_REQUEST.md` | What to ask a Moodle administrator for on an SSO site |
+| `TEST_DATA.md` | The Moodle courses and accounts needed to test against live data |
+| `TEST_PLAN.md` | Two-pass test procedure: as a student, then as a teacher |
+| `check_token.py` | Show which account a token belongs to and what it can see |
+| `TEST_DATA.md` | The Moodle courses and accounts needed to test against live data |
 | `client.py`, `client_localLLM.py` | Standalone chat clients |
 
 ## Credits
