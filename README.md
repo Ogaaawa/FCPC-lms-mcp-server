@@ -174,6 +174,69 @@ something to be right about.
 
 ---
 
+## Limitations
+
+Known and deliberate, as of the current version.
+
+### Students cannot get a token on an SSO site
+
+Where Moodle authenticates through Google or another identity provider,
+students have no Moodle password and no way to issue themselves a web service
+token. An administrator has to issue them. See the SSO section below and
+`ADMIN_REQUEST.md`. **On such a site this is a hard prerequisite, not a
+detail** - without tokens nobody can connect.
+
+### One Moodle site per server
+
+`MOODLE_URL` in `.env` holds a single address, so one running server serves one
+institution. Serving several would mean either one server each, or a change to
+let the sign-in page ask which site the user belongs to.
+
+### There is no audit log
+
+Nothing records who asked what. For a pilot among consenting users that is
+usually acceptable; for an institutional rollout, and certainly before any
+teacher-facing tool that reads other people's data, it will not be.
+
+### Times are shown in JST
+
+`moodle_client.py` formats timestamps as UTC+9. For an institution in another
+timezone they are wrong by the difference - one hour for the Philippines.
+
+It affects message and announcement timestamps. Deadlines are mostly unaffected,
+because `get_upcoming_deadlines` prefers the time Moodle itself formatted in the
+user's own timezone and only falls back to JST when Moodle omits it. The fix is
+to read the timezone from the site rather than hard-coding it.
+
+### Read-only by design
+
+Nothing submits work, posts to forums or sends messages, although the Moodle
+API would allow it with these tokens. An AI acting on a misunderstanding cannot
+un-submit an assignment, so writing is left out until it can be done behind an
+explicit confirmation step.
+
+### Teacher-facing tools do not exist
+
+All ten tools answer about the signed-in user's own data. A teacher gets their
+own courses and grades, not their students'. The Moodle functions needed for
+"who has not submitted?" are reachable, but building them needs a teacher
+account to verify against - **Moodle answers some permission failures with an
+empty list rather than an error**, so a broken tool and an empty class look
+identical. `check_token.py --teacher-probe` exists to tell them apart.
+
+### Free tunnels are not a deployment
+
+`start-server.command` uses a `trycloudflare.com` address, which changes on
+every restart and disappears when the window closes. Every student would have
+to re-register the connector. A pilot can live with it; a service needs a fixed
+address and a host that stays up.
+
+### Site-specific
+
+Global search is disabled on lms.fcpc.edu.ph, so nothing can search Moodle by
+keyword; content is reached by walking from the course list. Other sites may
+allow it.
+
 ## Notes on Moodle
 
 Some Moodle sites sit behind Cloudflare and reject ordinary HTTPS clients with
