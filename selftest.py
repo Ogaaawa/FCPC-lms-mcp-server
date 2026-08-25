@@ -63,6 +63,20 @@ def free_port() -> int:
 
 
 # ---------------------------------------------------------------- settings
+EXPECTED_TOOLS = {
+    "get_my_userid",
+    "get_upcoming_deadlines",
+    "get_due_assignments",
+    "check_new_messages",
+    "check_notifications",
+    "get_pending_quizzes",
+    "get_course_contents",
+    "get_course_announcements",
+    "get_my_grades",
+    "get_my_courses",
+}
+
+
 def check_settings():
     section("1. Settings")
     url = os.getenv("MOODLE_URL")
@@ -151,28 +165,37 @@ def check_local_mcp():
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = [t.name for t in (await session.list_tools()).tools]
-                    res = await session.call_tool("get_my_userid", {})
-                    text = "".join(
-                        c.text for c in res.content if getattr(c, "type", "") == "text"
-                    )
-                    return tools, text.strip()
+                    def text_of(result):
+                        return "".join(
+                            c.text for c in result.content
+                            if getattr(c, "type", "") == "text"
+                        ).strip()
+
+                    userid = text_of(await session.call_tool("get_my_userid", {}))
+                    due = text_of(await session.call_tool(
+                        "get_upcoming_deadlines", {"days": 30}))
+                    notes = text_of(await session.call_tool("check_notifications", {}))
+                    return tools, userid, due, notes
         finally:
             devnull.close()
 
     try:
-        tools, userid = asyncio.run(run())
+        tools, userid, due, notes = asyncio.run(run())
     except Exception as e:
         check("Server starts over stdio", False, f"{type(e).__name__}: {e}")
         return False
 
-    check("Server starts and lists its tools", len(tools) == 5, ", ".join(tools))
+    check("Server starts and lists its tools", set(tools) == EXPECTED_TOOLS,
+          ", ".join(tools))
     check("A tool call reaches Moodle", userid.isdigit(), f"user id {userid}")
+    check("The calendar answers about deadlines", bool(due), due.splitlines()[0] if due else "")
+    check("Notifications come back", bool(notes), notes.splitlines()[0] if notes else "")
     return True
 
 
 # ------------------------------------------------------- message handling
 def check_message_formatting():
-    section("4. Message handling (offline, with sample data)")
+    section("4. Message and deadline handling (offline, with sample data)")
     from moodle_client import MoodleClient
 
     cases = {
@@ -215,6 +238,311 @@ def check_message_formatting():
             client = MoodleClient("https://example.invalid", "token")
             try:
                 out = asyncio.run(client.check_new_messages())
+                ok &= check(label, verify(out), out.replace("\n", " | ")[:70])
+            except Exception as e:
+                ok &= check(label, False, f"{type(e).__name__}: {e}")
+    finally:
+        MoodleClient.call = original
+
+    ok &= check_deadline_formatting()
+    ok &= check_notification_formatting()
+    ok &= check_grade_formatting()
+    ok &= check_announcement_formatting()
+    ok &= check_contents_formatting()
+    return ok
+
+
+def check_contents_formatting():
+    """A real course outline is full of hidden and empty sections."""
+    from moodle_client import MoodleClient
+
+    cases = {
+        "activities are listed under their section": (
+            [{"name": "Week 1", "section": 1, "summary": "<p>Intro &amp; setup</p>",
+              "modules": [{"modname": "assign", "name": "Essay 1",
+                           "url": "https://lms/a/1"}]}],
+            lambda out: ("Week 1" in out and "Assignment: Essay 1" in out
+                         and "Intro & setup" in out),
+        ),
+        "hidden activities are left out": (
+            [{"name": "Week 1", "section": 1, "modules": [
+                {"modname": "assign", "name": "Visible", "url": "u"},
+                {"modname": "assign", "name": "Hidden", "uservisible": False}]}],
+            lambda out: "Visible" in out and "Hidden" not in out,
+        ),
+        "hidden sections are left out": (
+            [{"name": "Secret", "section": 1, "uservisible": False,
+              "modules": [{"modname": "assign", "name": "X"}]},
+             {"name": "Open", "section": 2,
+              "modules": [{"modname": "assign", "name": "Y"}]}],
+            lambda out: "Secret" not in out and "Open" in out,
+        ),
+        "empty template sections are dropped": (
+            [{"name": "General", "section": 0,
+              "modules": [{"modname": "forum", "name": "News"}]},
+             {"name": "New section", "section": 1, "modules": []},
+             {"name": "New section", "section": 2, "modules": []}],
+            lambda out: "New section" not in out and "News" in out,
+        ),
+        "an unnamed section falls back to its number": (
+            [{"section": 3, "modules": [
+                {"modname": "bigbluebuttonbn", "modplural": "Meetings"}]}],
+            lambda out: "Section 3" in out,
+        ),
+        "an empty course says so": (
+            [{"name": "New section", "section": 1, "modules": []}],
+            lambda out: "no visible activities" in out,
+        ),
+        "a course we cannot read explains why": (
+            None,
+            lambda out: "may not be enrolled" in out,
+        ),
+    }
+
+    ok = True
+    for label, (contents, verify) in cases.items():
+        client = MoodleClient("https://example.invalid", "token")
+        client._userid = 1
+
+        async def call(wsfunction, _c=contents, **params):
+            return _c if wsfunction == "core_course_get_contents" else None
+
+        client.call = call
+        try:
+            out = asyncio.run(client.get_course_contents(5))
+            ok &= check(label, verify(out), out.replace("\n", " | ")[:70])
+        except Exception as e:
+            ok &= check(label, False, f"{type(e).__name__}: {e}")
+    return ok
+
+
+def check_announcement_formatting():
+    """Only the "news" forum is the Announcements forum."""
+    from moodle_client import MoodleClient
+
+    news = [{"id": 10, "type": "news", "name": "Announcements"}]
+    post = {"discussions": [{"subject": "Exam moved",
+                             "message": "<p>Now on &amp; Friday</p>",
+                             "userfullname": "Dr Cruz", "created": 1755000000}]}
+
+    cases = {
+        "an announcement is reported with its author": (
+            [{"id": 5, "fullname": "History"}], news, post,
+            lambda out: "Exam moved" in out and "Dr Cruz" in out,
+        ),
+        "HTML in the post is stripped": (
+            [{"id": 5, "fullname": "History"}], news, post,
+            lambda out: "Now on & Friday" in out and "<p>" not in out,
+        ),
+        "ordinary forums are ignored": (
+            [{"id": 5, "fullname": "History"}],
+            [{"id": 11, "type": "general", "name": "Q&A"}], post,
+            lambda out: "Exam moved" not in out,
+        ),
+        "a post with no subject or author still prints": (
+            [{"id": 5, "fullname": "History"}], news,
+            {"discussions": [{"message": "body only"}]},
+            lambda out: "no subject" in out and "Unknown" in out,
+        ),
+        "being enrolled in nothing is not an error": (
+            [], news, post,
+            lambda out: "not enrolled" in out,
+        ),
+        "a failed course lookup is reported": (
+            None, news, post,
+            lambda out: "Could not retrieve" in out,
+        ),
+    }
+
+    ok = True
+    for label, (enrolled, forums, discussions, verify) in cases.items():
+        client = MoodleClient("https://example.invalid", "token")
+        client._userid = 1
+
+        async def call(wsfunction, _e=enrolled, _f=forums, _d=discussions, **params):
+            if wsfunction == "core_enrol_get_users_courses":
+                return _e
+            if wsfunction == "mod_forum_get_forums_by_courses":
+                return _f
+            if wsfunction == "mod_forum_get_forum_discussions":
+                return _d
+            return None
+
+        client.call = call
+        try:
+            out = asyncio.run(client.get_course_announcements())
+            ok &= check(label, verify(out), out.replace("\n", " | ")[:70])
+        except Exception as e:
+            ok &= check(label, False, f"{type(e).__name__}: {e}")
+    return ok
+
+
+def check_grade_formatting():
+    """Moodle reports grades by course id only, with "-" for ungraded."""
+    from moodle_client import MoodleClient
+
+    cases = {
+        "course ids are turned into names": (
+            {"grades": [{"courseid": 5, "grade": "85.00 %"}]},
+            [{"id": 5, "fullname": "History 101"}],
+            lambda out: "History 101: 85.00 %" in out,
+        ),
+        "a rank is included when given": (
+            {"grades": [{"courseid": 5, "grade": "85", "rank": 3}]},
+            [{"id": 5, "fullname": "History"}],
+            lambda out: "(rank 3)" in out,
+        ),
+        "'-' is reported as not graded yet": (
+            {"grades": [{"courseid": 5, "grade": "-"}]},
+            [{"id": 5, "fullname": "History"}],
+            lambda out: "not graded yet" in out,
+        ),
+        "an unknown course still shows its grade": (
+            {"grades": [{"courseid": 99, "grade": "60"}]}, [],
+            lambda out: "Course 99: 60" in out,
+        ),
+        "a failed course lookup does not lose the grade": (
+            {"grades": [{"courseid": 99, "grade": "60"}]}, None,
+            lambda out: "60" in out,
+        ),
+        "no grades yet is not an error": (
+            {"grades": []}, [],
+            lambda out: "No grades have been recorded" in out,
+        ),
+    }
+
+    ok = True
+    for label, (grades, courses, verify) in cases.items():
+        client = MoodleClient("https://example.invalid", "token")
+        client._userid = 1
+
+        async def call(wsfunction, _g=grades, _c=courses, **params):
+            if wsfunction == "gradereport_overview_get_course_grades":
+                return _g
+            if wsfunction == "core_enrol_get_users_courses":
+                return _c
+            return None
+
+        client.call = call
+        try:
+            out = asyncio.run(client.get_my_grades())
+            ok &= check(label, verify(out), out.replace("\n", " | ")[:70])
+        except Exception as e:
+            ok &= check(label, False, f"{type(e).__name__}: {e}")
+    return ok
+
+
+def check_notification_formatting():
+    """Notifications are a separate inbox and arrive in a looser shape."""
+    from moodle_client import MoodleClient
+
+    cases = {
+        "read notifications are filtered out by default": (
+            {"unreadcount": 1, "notifications": [
+                {"subject": "New", "smallmessage": "a", "read": False},
+                {"subject": "Seen already", "smallmessage": "b", "read": True}]},
+            lambda out: "New" in out and "Seen already" not in out,
+        ),
+        "the unread count is stated": (
+            {"unreadcount": 3, "notifications": [
+                {"subject": "One", "read": False}]},
+            lambda out: "3 unread notifications" in out,
+        ),
+        "HTML in the body is stripped": (
+            {"unreadcount": 1, "notifications": [
+                {"subject": "Due", "smallmessage": "<p>Essay &amp; report</p>",
+                 "read": False}]},
+            lambda out: "Essay & report" in out and "<p>" not in out,
+        ),
+        "a link is shown when Moodle gives one": (
+            {"unreadcount": 1, "notifications": [
+                {"subject": "Graded", "read": False,
+                 "contexturl": "https://lms/mod/assign/view.php?id=9"}]},
+            lambda out: "Link: https://lms/mod/assign" in out,
+        ),
+        "a notification with no body still prints": (
+            {"unreadcount": 1, "notifications": [{"subject": "Bare", "read": False}]},
+            lambda out: "Bare" in out,
+        ),
+        "a notification with no subject still prints": (
+            {"unreadcount": 1, "notifications": [
+                {"smallmessage": "body only", "read": False}]},
+            lambda out: "no subject" in out or "body only" in out,
+        ),
+        "an empty inbox is not an error": (
+            {"unreadcount": 0, "notifications": []},
+            lambda out: "no unread notifications" in out,
+        ),
+    }
+
+    ok = True
+    for label, (payload, verify) in cases.items():
+        client = MoodleClient("https://example.invalid", "token")
+        client._userid = 1
+
+        async def call(wsfunction, _p=payload, **params):
+            if wsfunction == "message_popup_get_popup_notifications":
+                return _p
+            return None
+
+        client.call = call
+        try:
+            out = asyncio.run(client.check_notifications())
+            ok &= check(label, verify(out), out.replace("\n", " | ")[:70])
+        except Exception as e:
+            ok &= check(label, False, f"{type(e).__name__}: {e}")
+    return ok
+
+
+def check_deadline_formatting():
+    """The calendar reply is far less uniform than Moodle's docs suggest."""
+    from moodle_client import MoodleClient
+
+    cases = {
+        "uses the time Moodle formatted for the user": (
+            [{"activityname": "Essay", "modulename": "assign",
+              "course": {"fullname": "History"},
+              "formattedtime": "<a href='#'>1 September 2026, 11:59 PM</a>",
+              "timesort": 1788000000}],
+            lambda out: "1 September 2026, 11:59 PM" in out and "<a" not in out,
+        ),
+        "falls back to its own formatting": (
+            [{"activityname": "Essay", "modulename": "assign",
+              "course": {"fullname": "History"}, "timesort": 1788000000}],
+            lambda out: "JST" in out,
+        ),
+        "module names are readable": (
+            [{"activityname": "Essay", "modulename": "assign",
+              "course": {"fullname": "History"}, "timesort": 1788000000}],
+            lambda out: "Assignment: Essay" in out,
+        ),
+        "overdue items say so": (
+            [{"activityname": "Late one", "modulename": "quiz", "overdue": True,
+              "course": {"fullname": "Maths"}, "timesort": 1788000000}],
+            lambda out: "(overdue)" in out,
+        ),
+        "an event with no course or name still prints": (
+            [{"timesort": 0}],
+            lambda out: "No course" in out and "no date given" in out,
+        ),
+        "an empty calendar is not an error": (
+            [], lambda out: "Nothing is due" in out,
+        ),
+    }
+
+    original = MoodleClient.call
+    ok = True
+    try:
+        for label, (events, verify) in cases.items():
+            async def fake(self, wsfunction, _e=events, **params):
+                if wsfunction == "core_calendar_get_action_events_by_timesort":
+                    return {"events": _e}
+                return None
+
+            MoodleClient.call = fake
+            client = MoodleClient("https://example.invalid", "token")
+            try:
+                out = asyncio.run(client.get_upcoming_deadlines())
                 ok &= check(label, verify(out), out.replace("\n", " | ")[:70])
             except Exception as e:
                 ok &= check(label, False, f"{type(e).__name__}: {e}")
@@ -275,8 +603,37 @@ def check_isolation():
 
 
 # --------------------------------------------------------- remote + oauth
+def check_token_input():
+    """The sign-in page accepts a pasted token as well as a password.
+
+    Students on SSO sites have no Moodle password, so this is the only route
+    open to them.
+    """
+    section("6. Signing in with a pasted token (offline, with sample data)")
+    import login_page
+
+    plain = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    # base64 of "1:::abc123:::def456", the shape launch.php returns
+    blob = "MTo6OmFiYzEyMzo6OmRlZjQ1Ng=="
+
+    cases = [
+        ("A plain token is passed through", plain, plain),
+        ("A moodlemobile:// value is decoded", f"moodlemobile://token={blob}", "abc123"),
+        ("The base64 part on its own is decoded", blob, "abc123"),
+        ("Stray whitespace is trimmed", f"  {plain}  ", plain),
+        ("An empty box is treated as empty", "   ", ""),
+        ("Unrecognised text is left alone", "not-a-token", "not-a-token"),
+    ]
+    ok = True
+    for label, raw, expected in cases:
+        got = login_page.extract_token(raw)
+        ok &= check(label, got == expected,
+                    "" if got == expected else f"expected {expected!r}, got {got!r}")
+    return ok
+
+
 def check_remote_oauth():
-    section("6. Remote server and OAuth (what Claude does)")
+    section("7. Remote server and OAuth (what Claude does)")
     import httpx
     import uvicorn
 
@@ -354,6 +711,8 @@ def check_remote_oauth():
         ok &= check("Sign-in page works on a phone screen", "viewport" in page.text)
         ok &= check("Sign-in page asks for a username and password",
                     'name="username"' in page.text and 'type="password"' in page.text)
+        ok &= check("Sign-in page also accepts a pasted token",
+                    'name="token"' in page.text)
 
         expired = httpx.get(f"{base}/login", params={"k": "not-a-real-key"}, timeout=15)
         ok &= check("Rejects an expired or forged sign-in link",
@@ -402,7 +761,8 @@ def check_remote_oauth():
                                     "clientInfo": {"name": "selftest", "version": "1"}})
         listed = call(access, "tools/list")
         names = [t["name"] for t in listed.get("result", {}).get("tools", [])]
-        ok &= check("Lists tools once signed in", len(names) == 5, ", ".join(names))
+        ok &= check("Lists tools once signed in", set(names) == EXPECTED_TOOLS,
+                    ", ".join(names))
 
         called = call(access, "tools/call",
                       {"name": "get_my_userid", "arguments": {}})
@@ -410,6 +770,31 @@ def check_remote_oauth():
                        for c in called.get("result", {}).get("content", []))
         ok &= check("A signed-in tool call reaches Moodle",
                     text.strip().isdigit(), f"user id {text.strip()}")
+
+        # -- an unknown method used to kill the session manager for good:
+        #    every later request failed with "Task group is not initialized".
+        def raw(payload):
+            return httpx.post(f"{base}/mcp", timeout=20, follow_redirects=False,
+                              headers={"Authorization": f"Bearer {access}",
+                                       "Accept": "application/json, text/event-stream",
+                                       "Content-Type": "application/json"},
+                              json=payload)
+
+        probe = raw({"jsonrpc": "2.0", "id": 99, "method": "server/discover",
+                     "params": {}})
+        ok &= check(
+            "Answers an unknown method instead of crashing",
+            probe.status_code == 200
+            and probe.json().get("error", {}).get("code") == -32601,
+            f"HTTP {probe.status_code}")
+
+        note = raw({"jsonrpc": "2.0", "method": "notifications/unheard_of"})
+        ok &= check("Accepts an unknown notification quietly",
+                    note.status_code == 202, f"HTTP {note.status_code}")
+
+        again = call(access, "tools/list")
+        ok &= check("Still serving after an unknown method",
+                    len(again.get("result", {}).get("tools", [])) == len(EXPECTED_TOOLS))
 
         # -- forged and swapped tokens
         for bad, label in [
@@ -476,11 +861,11 @@ def main():
     settings_ok = check_settings()
 
     if args.offline:
-        section("2-3, 6. Network checks")
+        section("2-3, 7. Network checks")
         skip("Moodle connection, local MCP server, remote server and OAuth",
              "--offline was given")
     elif not settings_ok:
-        section("2-3, 6. Network checks")
+        section("2-3, 7. Network checks")
         skip("Moodle connection, local MCP server, remote server and OAuth",
              "settings are incomplete; run setup_gui.py first")
     else:
@@ -489,6 +874,7 @@ def main():
 
     check_message_formatting()
     check_isolation()
+    check_token_input()
 
     if not args.offline and settings_ok:
         check_remote_oauth()
