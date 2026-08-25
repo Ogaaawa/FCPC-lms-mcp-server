@@ -136,6 +136,26 @@ python client.py server.py
 
 ---
 
+## Testing
+
+`selftest.py` checks everything that can be checked without a browser: the
+Moodle connection, both servers, the OAuth flow through to a real tool call,
+and that users cannot see each other's data.
+
+```
+python selftest.py             # all checks
+python selftest.py --offline   # skip anything needing the network
+```
+
+It exits 0 when everything passes and prints the remaining manual steps:
+registering the connector in Claude, signing in, asking a question, and
+repeating it on a phone.
+
+Run it after installing, after changing the code, and on the machine that will
+host the server.
+
+---
+
 ## Notes on Moodle
 
 Some Moodle sites sit behind Cloudflare and reject ordinary HTTPS clients with
@@ -159,6 +179,7 @@ Users who sign in to Moodle through SSO (Google and similar) cannot use
 | `setup_gui.py` | Setup wizard |
 | `setup.command` / `setup.bat` | Double-click setup (macOS / Windows) |
 | `start-server.command` | Publish the remote server (macOS) |
+| `selftest.py` | Check the installation end to end |
 | `list_tools.py` | Print the tools the AI sees |
 | `get_token.py` | Fetch a token from the command line |
 | `decode_token.py` | Token extraction for SSO users |
