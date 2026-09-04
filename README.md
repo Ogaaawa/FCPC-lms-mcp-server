@@ -278,6 +278,8 @@ their security trade-offs.
 | `ADMIN_REQUEST.md` | What to ask a Moodle administrator for on an SSO site |
 | `TEST_DATA.md` | The Moodle courses and accounts needed to test against live data |
 | `TEST_PLAN.md` | Two-pass test procedure: as a student, then as a teacher |
+| `DEPLOYMENT.md` | Running a pilot: hosting, a fixed address, monitoring, shutdown |
+| `healthcheck.py` | Check a deployed server from outside, without a token |
 | `check_token.py` | Show which account a token belongs to and what it can see |
 | `TEST_DATA.md` | The Moodle courses and accounts needed to test against live data |
 | `client.py`, `client_localLLM.py` | Standalone chat clients |
