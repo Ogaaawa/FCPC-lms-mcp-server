@@ -7,6 +7,10 @@ Usage:
     python get_token.py
       -> prompts for the address, username and password
     python get_token.py https://lms.fcpc.edu.ph <username> <password>
+
+By default the token is written to .env, replacing whatever was there. Pass
+--no-save to print it instead and leave .env alone - use that when testing
+whether a second account can get a token at all.
 """
 import sys
 from getpass import getpass
@@ -16,8 +20,11 @@ from moodle_auth import MoodleAuthError
 
 
 def main():
-    if len(sys.argv) >= 4:
-        base_url, username, password = sys.argv[1], sys.argv[2], sys.argv[3]
+    save = "--no-save" not in sys.argv
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+
+    if len(argv) >= 3:
+        base_url, username, password = argv[0], argv[1], argv[2]
     else:
         base_url = input(f"Moodle address [{moodle_auth.DEFAULT_URL}]: ").strip() or moodle_auth.DEFAULT_URL
         username = input("Username: ").strip()
@@ -32,6 +39,11 @@ def main():
         info = moodle_auth.verify_token(base_url, token)
         print(f"Site: {info.get('sitename')}")
         print(f"Signed in as: {info.get('fullname')} ({info.get('username')})")
+
+        if not save:
+            print(f"\nToken: {token}")
+            print("\n.env was left untouched (--no-save).")
+            return
 
         path = moodle_auth.update_env({"MOODLE_URL": base_url, "MOODLE_TOKEN": token})
         print(f"\nSaved settings to {path}")

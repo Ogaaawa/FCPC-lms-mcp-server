@@ -58,6 +58,7 @@ PAGE = """<!doctype html>
   }}
   .or::before, .or::after {{ content: ""; flex: 1; height: 1px; background: #dcdee1; }}
   button.alt {{ background: #5a6270; }}
+  button.auto {{ margin-bottom: 4px; }}
   @media (prefers-color-scheme: dark) {{
     body {{ background: #16181c; color: #e8e8e8; }}
     .card {{ background: #212429; box-shadow: none; }}
@@ -86,6 +87,13 @@ PAGE = """<!doctype html>
       Your password is used once to sign in and is never stored.
     </p>
 
+    <button id="auto" class="auto" hidden type="button">Sign in with Moodle</button>
+    <p class="note" id="autonote" hidden>
+      Opens Moodle, where you sign in as usual. Your browser will ask
+      permission to hand the result back to this page - please allow it.
+      Not available in Safari.
+    </p>
+
     <div class="or">or use a token</div>
     <form method="post" action="/login">
       <input type="hidden" name="k" value="{key}">
@@ -99,6 +107,30 @@ PAGE = """<!doctype html>
       Pasting the whole <code>moodlemobile://token=...</code> value works too.
     </p>
   </div>
+<script>
+(function () {{
+  var button = document.getElementById("auto");
+  var note = document.getElementById("autonote");
+  if (!navigator.registerProtocolHandler) return;   // Safari lands here
+
+  button.hidden = false;
+  note.hidden = false;
+  button.addEventListener("click", function () {{
+    try {{
+      // The browser hands "web+fcpcmoodle://token=..." to /catch, which is
+      // the whole point: a web page cannot receive moodlemobile:// itself.
+      navigator.registerProtocolHandler("web+fcpcmoodle", "/catch?u=%s");
+    }} catch (e) {{
+      // Already registered, or refused. Carry on; the redirect may still work.
+    }}
+    var passport = Math.floor(Math.random() * 1000000000);
+    location.href = "{moodle}/admin/tool/mobile/launch.php"
+      + "?service=moodle_mobile_app"
+      + "&passport=" + passport
+      + "&urlscheme=" + encodeURIComponent("web+fcpcmoodle");
+  }});
+}})();
+</script>
 </body>
 </html>
 """
@@ -133,9 +165,22 @@ def extract_token(raw: str) -> str:
     return parts[1].strip() if len(parts) >= 2 and parts[1].strip() else raw
 
 
-def render(key: str, error: str = "") -> HTMLResponse:
+COOKIE = "mcp_pending"
+
+
+def render(key: str, moodle_url: str, error: str = "") -> HTMLResponse:
     block = f'<div class="err">{html_mod.escape(error)}</div>' if error else ""
-    return HTMLResponse(PAGE.format(key=html_mod.escape(key), error=block))
+    page = PAGE.format(
+        key=html_mod.escape(key),
+        error=block,
+        moodle=html_mod.escape(moodle_url.rstrip("/")),
+    )
+    response = HTMLResponse(page)
+    # The protocol handler URL is fixed, so the pending request is carried
+    # in a cookie rather than in the handler's query string.
+    response.set_cookie(COOKIE, key, max_age=900, httponly=True,
+                        secure=True, samesite="lax", path="/")
+    return response
 
 
 def make_routes(provider, moodle_url: str):
@@ -145,7 +190,7 @@ def make_routes(provider, moodle_url: str):
         key = request.query_params.get("k", "")
         if not provider.get_pending(key):
             return HTMLResponse(EXPIRED, status_code=400)
-        return render(key)
+        return render(key, moodle_url)
 
     async def post_login(request):
         form = await request.form()
@@ -167,11 +212,41 @@ def make_routes(provider, moodle_url: str):
                 )
             moodle_auth.verify_token(moodle_url, token)
         except MoodleAuthError as e:
-            return render(key, str(e))
+            return render(key, moodle_url, str(e))
 
         redirect_to = provider.complete_login(key, token)
         if not redirect_to:
             return HTMLResponse(EXPIRED, status_code=400)
         return RedirectResponse(redirect_to, status_code=302)
 
-    return get_login, post_login
+    async def catch(request):
+        """Receive the token the browser hands back from launch.php.
+
+        Moodle will only return a token to a URL scheme, never to a web
+        address. Registering `web+fcpcmoodle` as a protocol handler makes the
+        browser itself deliver it here, which is what saves the student from
+        digging it out of developer tools. Safari has no protocol handler
+        support, so the token box on the sign-in page remains the fallback.
+        """
+        key = request.cookies.get(COOKIE, "")
+        if not provider.get_pending(key):
+            return HTMLResponse(EXPIRED, status_code=400)
+
+        token = extract_token(request.query_params.get("u", ""))
+        if not token:
+            return render(key, moodle_url,
+                          "Moodle did not send a token back. Please try again, "
+                          "or paste one into the box below.")
+        try:
+            moodle_auth.verify_token(moodle_url, token)
+        except MoodleAuthError as e:
+            return render(key, moodle_url, str(e))
+
+        redirect_to = provider.complete_login(key, token)
+        if not redirect_to:
+            return HTMLResponse(EXPIRED, status_code=400)
+        response = RedirectResponse(redirect_to, status_code=302)
+        response.delete_cookie(COOKIE, path="/")
+        return response
+
+    return get_login, post_login, catch

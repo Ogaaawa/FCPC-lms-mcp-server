@@ -12,7 +12,12 @@ import re
 from curl_cffi import requests
 
 IMPERSONATE = os.getenv("MOODLE_IMPERSONATE", "chrome131")
-SERVICE = "moodle_mobile_app"
+
+# Which external service login/token.php issues a token for. The default is
+# Moodle's built-in mobile service, which exposes every function the site has.
+# A site that has defined a restricted service for this assistant should name
+# it here instead, so the token cannot reach beyond the functions it needs.
+SERVICE = os.getenv("MOODLE_SERVICE", "moodle_mobile_app")
 DEFAULT_URL = "https://lms.fcpc.edu.ph"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(ROOT, ".env")
@@ -91,8 +96,13 @@ def _parse_json(response, url: str):
         )
 
 
-def fetch_token(base_url: str, username: str, password: str) -> str:
-    """Exchange a username and password for a web service token."""
+def fetch_token(base_url: str, username: str, password: str,
+                service: str = "") -> str:
+    """Exchange a username and password for a web service token.
+
+    `service` is the external service shortname; it falls back to whatever
+    MOODLE_SERVICE says, and then to Moodle's mobile service.
+    """
     base_url = normalize_url(base_url)
     if not username.strip():
         raise MoodleAuthError("Please enter your username.")
@@ -100,7 +110,8 @@ def fetch_token(base_url: str, username: str, password: str) -> str:
         raise MoodleAuthError("Please enter your password.")
 
     url = f"{base_url}/login/token.php"
-    r = _get(url, {"username": username.strip(), "password": password, "service": SERVICE})
+    r = _get(url, {"username": username.strip(), "password": password,
+                   "service": service or SERVICE})
     data = _parse_json(r, url)
 
     if isinstance(data, dict) and data.get("token"):

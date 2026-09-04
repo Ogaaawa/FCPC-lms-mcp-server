@@ -718,6 +718,46 @@ def check_remote_oauth():
         ok &= check("Rejects an expired or forged sign-in link",
                     expired.status_code == 400)
 
+        # -- the browser hands the token back through a protocol handler
+        ok &= check("Sign-in page offers the automatic route",
+                    'id="auto"' in page.text and "registerProtocolHandler" in page.text)
+        ok &= check("Sign-in page remembers which request it belongs to",
+                    "mcp_pending" in page.headers.get("set-cookie", ""))
+
+        def fresh_key():
+            v = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+            ch = base64.urlsafe_b64encode(
+                hashlib.sha256(v.encode()).digest()).rstrip(b"=").decode()
+            r = httpx.get(f"{base}/authorize", timeout=15, follow_redirects=False, params={
+                "response_type": "code", "client_id": client_id,
+                "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+                "code_challenge": ch, "code_challenge_method": "S256",
+                "scope": "moodle"})
+            return r.headers["location"].split("k=")[1].split("&")[0]
+
+        def handback(pending, value):
+            headers = {"Cookie": f"mcp_pending={pending}"} if pending else {}
+            return httpx.get(f"{base}/catch", params={"u": value}, headers=headers,
+                             timeout=30, follow_redirects=False)
+
+        blob = base64.b64encode(
+            f"siteid:::{os.getenv('MOODLE_TOKEN')}".encode()).decode()
+        caught = handback(fresh_key(), f"web+fcpcmoodle://token={blob}")
+        ok &= check("Accepts the token the browser hands back",
+                    "code=" in caught.headers.get("location", ""),
+                    f"HTTP {caught.status_code}")
+
+        stray = handback("", f"web+fcpcmoodle://token={blob}")
+        ok &= check("Ignores a handback with no pending request",
+                    stray.status_code == 400)
+
+        forged = handback(fresh_key(),
+                          "web+fcpcmoodle://token=" + base64.b64encode(
+                              b"siteid:::" + b"0" * 32).decode())
+        ok &= check("Refuses a forged token in the handback",
+                    "code=" not in forged.headers.get("location", "")
+                    and 'class="err"' in forged.text)
+
         # -- issue a token the way a successful sign-in would
         redirect = remote_server._provider.complete_login(key, os.getenv("MOODLE_TOKEN"))
         code = redirect.split("code=")[1].split("&")[0]

@@ -332,9 +332,10 @@ def build_app(public_url: str):
     server = build(public)
     inner = server.streamable_http_app()
 
-    get_login, post_login = login_page.make_routes(_provider, MOODLE_URL)
+    get_login, post_login, catch = login_page.make_routes(_provider, MOODLE_URL)
     inner.router.routes.append(Route("/login", get_login, methods=["GET"]))
     inner.router.routes.append(Route("/login", post_login, methods=["POST"]))
+    inner.router.routes.append(Route("/catch", catch, methods=["GET"]))
 
     # RFC 9728: Claude reads this to find the authorization server.
     async def protected_resource(request):
