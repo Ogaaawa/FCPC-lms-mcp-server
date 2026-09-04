@@ -75,15 +75,21 @@ It prints the address to hand out:
 https://xxxx.trycloudflare.com/mcp
 ```
 
-There is no Windows or Linux launcher yet. On those, run the two parts
-yourself:
+```
+./start-server.sh               # Linux, or macOS
+```
+
+Both use a quick tunnel. On Windows, run the two parts yourself:
 
 ```
 cloudflared tunnel --url http://127.0.0.1:8000 --no-autoupdate
-venv/bin/python remote_server.py --port 8000 --public-url https://<the address>
+venv\Scripts\python remote_server.py --port 8000 --public-url https://<the address>
 ```
 
 The public address must be passed in, because it becomes the OAuth issuer.
+
+For a host that should survive a reboot, do not use these at all. Install a
+named tunnel and the systemd unit in `deploy/` - see `deploy/README.md`.
 
 ### A fixed address
 
@@ -118,6 +124,10 @@ A terminal window someone must leave open **will** be closed, and a laptop
 2. A dedicated machine that nobody else uses
 3. A desktop PC, with the service configured to start at boot rather than at
    login
+
+On Linux, `deploy/moodle-mcp.service` does this. `cloudflared service install`
+registers the tunnel as its own service, so the two halves come back
+independently.
 
 Whatever you choose, restart it once deliberately and confirm it comes back by
 itself. An untested restart is not a restart.

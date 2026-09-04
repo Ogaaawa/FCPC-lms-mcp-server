@@ -1,0 +1,63 @@
+# systemd unit for the Moodle MCP server.
+#
+# Use this together with a NAMED Cloudflare tunnel, not the quick tunnel in
+# start-server.sh: the public address becomes the OAuth issuer, so it has to
+# be the same after every restart. `cloudflared service install <token>`
+# registers its own service, so this unit only runs the Python side.
+#
+# Install:
+#   sudo useradd --system --create-home --home-dir /opt/moodle-mcp moodle-mcp
+#   sudo -u moodle-mcp git clone <repo> /opt/moodle-mcp/app
+#   cd /opt/moodle-mcp/app
+#   sudo -u moodle-mcp python3 -m venv venv
+#   sudo -u moodle-mcp venv/bin/pip install -r requirements.txt
+#   sudo -u moodle-mcp cp .env.example .env && sudo -u moodle-mcp nano .env
+#   sudo cp deploy/moodle-mcp.service /etc/systemd/system/
+#   sudo nano /etc/systemd/system/moodle-mcp.service     # set PUBLIC_URL
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now moodle-mcp
+#
+# Check:
+#   systemctl status moodle-mcp
+#   journalctl -u moodle-mcp -f
+#   venv/bin/python healthcheck.py https://ai.fcpc.edu.ph/mcp
+
+[Unit]
+Description=Moodle MCP server
+Documentation=https://github.com/Ogaaawa/FCPC-lms-mcp-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=moodle-mcp
+Group=moodle-mcp
+WorkingDirectory=/opt/moodle-mcp/app
+
+# The address students reach this on. It becomes the OAuth issuer, so it must
+# match the tunnel's public hostname exactly and must not change.
+Environment=PUBLIC_URL=https://ai.fcpc.edu.ph
+Environment=PORT=8000
+
+ExecStart=/opt/moodle-mcp/app/venv/bin/python remote_server.py \
+    --host 127.0.0.1 --port ${PORT} --public-url ${PUBLIC_URL}
+
+# Come back on its own. This is the whole point of running it as a service.
+Restart=always
+RestartSec=5
+
+# The process only needs to read its own directory and reach the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/moodle-mcp/app
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -271,6 +271,8 @@ their security trade-offs.
 | `setup_gui.py` | Setup wizard |
 | `setup.command` / `setup.bat` | Double-click setup (macOS / Windows) |
 | `start-server.command` | Publish the remote server (macOS) |
+| `start-server.sh` | Publish the remote server (Linux, or macOS) |
+| `deploy/` | systemd unit and notes for a host that must survive a reboot |
 | `selftest.py` | Check the installation end to end |
 | `list_tools.py` | Print the tools the AI sees |
 | `get_token.py` | Fetch a token from the command line |
