@@ -10,6 +10,25 @@ registering **one URL**. No software to install, no tokens to copy by hand.
 Built for First City Providential College, but it works against any Moodle site
 with web services enabled.
 
+## Start here
+
+| You are | Read |
+|---|---|
+| **Installing this on a server** | **`INSTALL.md`** - a runbook, with a check after every step |
+| Asking a Moodle administrator for what it needs | `ADMIN_REQUEST.md` - hand it over as it is |
+| Running it during a pilot | `DEPLOYMENT.md` - monitoring, daily checks, shutdown |
+| Testing it | `TEST_PLAN.md`, and `TEST_DATA.md` for the Moodle content to create |
+| Just trying it on your own machine | **Local server**, below |
+
+Two things decide whether this can work at all, so check them before anything
+else:
+
+1. **Can a student get a Moodle web service token?** On a site where students
+   sign in through Google they cannot do it unaided - an administrator has to
+   act. `ADMIN_REQUEST.md`
+2. **Does the machine that will host it stay up?** A laptop that sleeps takes
+   every student offline with it. `DEPLOYMENT.md`
+
 ## What it can answer
 
 - Everything with a deadline in the coming days, in one list
@@ -274,6 +293,8 @@ their security trade-offs.
 | `start-server.sh` | Publish the remote server (Linux, or macOS) |
 | `deploy/` | systemd unit and notes for a host that must survive a reboot |
 | `selftest.py` | Check the installation end to end |
+| `INSTALL.md` | Installation runbook for a server |
+| `requirements-server.txt` | What the server needs, without the optional chat client |
 | `list_tools.py` | Print the tools the AI sees |
 | `get_token.py` | Fetch a token from the command line |
 | `decode_token.py` | Token extraction for SSO users |

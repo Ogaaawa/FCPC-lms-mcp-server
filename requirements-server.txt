@@ -1,0 +1,12 @@
+# Everything the remote MCP server needs, and nothing else.
+#
+# requirements.txt additionally installs the OpenAI client, which only the
+# standalone chat client (client.py) uses. A server does not need it.
+#
+#   venv/bin/pip install -r requirements-server.txt
+
+httpx==0.28.1
+python-dotenv==1.1.0
+mcp==1.9.1
+curl_cffi==0.16.1
+cryptography==50.0.0

@@ -1,5 +1,7 @@
 # Secrets - never commit these
 .env
+.env.*
+!.env.example
 config.json
 .oauth_key
 .oauth_clients.json
