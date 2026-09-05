@@ -7,6 +7,7 @@ survive a reboot.
 | File | Purpose |
 |---|---|
 | `moodle-mcp.service` | systemd unit for the MCP server |
+| `windows.md` | The same thing on Windows: scheduled task, sleep, updates |
 
 ## The two halves
 

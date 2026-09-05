@@ -1,2 +1,6 @@
+# Batch files must keep CRLF; some Windows shells mis-handle goto with LF only.
 *.bat text eol=crlf
+
+# Shell scripts must keep LF, even when checked out on Windows.
+*.sh   text eol=lf
 *.command text eol=lf

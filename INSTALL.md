@@ -78,7 +78,7 @@ granted so `/user/managetoken.php` shows each student their own.
 
 | | |
 |---|---|
-| OS | Linux (a unit file is provided). macOS works; Windows needs manual service setup |
+| OS | Linux (a unit file is provided), or Windows (see `deploy/windows.md`). macOS works for a demo |
 | Python | 3.11 or newer |
 | Network | Outbound HTTPS. **No firewall change** |
 | Disk | About 300 MB including the virtual environment |

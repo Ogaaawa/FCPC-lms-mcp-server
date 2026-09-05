@@ -289,6 +289,7 @@ their security trade-offs.
 | `moodle_auth.py` | Token retrieval and `.env` handling |
 | `setup_gui.py` | Setup wizard |
 | `setup.command` / `setup.bat` | Double-click setup (macOS / Windows) |
+| `start-server.bat` | Publish the remote server (Windows) |
 | `start-server.command` | Publish the remote server (macOS) |
 | `start-server.sh` | Publish the remote server (Linux, or macOS) |
 | `deploy/` | systemd unit and notes for a host that must survive a reboot |
