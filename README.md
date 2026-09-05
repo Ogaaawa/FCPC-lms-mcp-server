@@ -14,7 +14,7 @@ with web services enabled.
 
 | You are | Read |
 |---|---|
-| **Installing this on a server** | **`INSTALL.md`** - a runbook, with a check after every step |
+| **Installing this on a server** | **`INSTALL.md`**, then `install/windows.md`, `install/macos.md` or `install/linux.md` |
 | Asking a Moodle administrator for what it needs | `ADMIN_REQUEST.md` - hand it over as it is |
 | Running it during a pilot | `DEPLOYMENT.md` - monitoring, daily checks, shutdown |
 | Testing it | `TEST_PLAN.md`, and `TEST_DATA.md` for the Moodle content to create |
@@ -292,9 +292,10 @@ their security trade-offs.
 | `start-server.bat` | Publish the remote server (Windows) |
 | `start-server.command` | Publish the remote server (macOS) |
 | `start-server.sh` | Publish the remote server (Linux, or macOS) |
-| `deploy/` | systemd unit and notes for a host that must survive a reboot |
+| `deploy/` | Service definitions: a systemd unit and a launchd job |
 | `selftest.py` | Check the installation end to end |
-| `INSTALL.md` | Installation runbook for a server |
+| `INSTALL.md` | Moodle prerequisites, then which platform guide to follow |
+| `install/` | One installation guide per platform: Windows, macOS, Linux |
 | `requirements-server.txt` | What the server needs, without the optional chat client |
 | `list_tools.py` | Print the tools the AI sees |
 | `get_token.py` | Fetch a token from the command line |

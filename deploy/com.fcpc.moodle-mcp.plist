@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job for the Moodle MCP server on macOS.
+
+  Use this together with a NAMED Cloudflare tunnel, not the quick tunnel in
+  start-server.command: the public address becomes the OAuth issuer, so it has
+  to be the same after every restart. `cloudflared service install <token>`
+  registers its own launchd job, so this one only runs the Python side.
+
+  Install (see install/macos.md):
+    sudo cp deploy/com.fcpc.moodle-mcp.plist /Library/LaunchDaemons/
+    sudo nano /Library/LaunchDaemons/com.fcpc.moodle-mcp.plist   # paths, URL, user
+    sudo chown root:wheel /Library/LaunchDaemons/com.fcpc.moodle-mcp.plist
+    sudo chmod 644 /Library/LaunchDaemons/com.fcpc.moodle-mcp.plist
+    sudo launchctl load -w /Library/LaunchDaemons/com.fcpc.moodle-mcp.plist
+
+  A LaunchDaemon starts at boot without anybody logging in, which a LaunchAgent
+  does not.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fcpc.moodle-mcp</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/moodle-mcp/app/venv/bin/python</string>
+        <string>/opt/moodle-mcp/app/remote_server.py</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8000</string>
+        <!-- Must match the tunnel hostname exactly: no trailing slash, no /mcp -->
+        <string>--public-url</string>
+        <string>https://ai.example.edu</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/moodle-mcp/app</string>
+
+    <!-- The account that owns the checkout. Not root. -->
+    <key>UserName</key>
+    <string>moodle-mcp</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Come back on its own. This is the whole point of running it as a job. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/moodle-mcp.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/moodle-mcp.log</string>
+</dict>
+</plist>

@@ -5,7 +5,7 @@
 # be the same after every restart. `cloudflared service install <token>`
 # registers its own service, so this unit only runs the Python side.
 #
-# Install:
+# Install (see install/linux.md):
 #   sudo useradd --system --create-home --home-dir /opt/moodle-mcp moodle-mcp
 #   sudo -u moodle-mcp git clone <repo> /opt/moodle-mcp/app
 #   cd /opt/moodle-mcp/app

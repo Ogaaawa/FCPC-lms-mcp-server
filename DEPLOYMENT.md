@@ -89,7 +89,7 @@ venv\Scripts\python remote_server.py --port 8000 --public-url https://<the addre
 The public address must be passed in, because it becomes the OAuth issuer.
 
 For a host that should survive a reboot, do not use these at all. Install a
-named tunnel and the systemd unit in `deploy/` - see `deploy/README.md`.
+named tunnel and the systemd unit in `deploy/` - see the guide for your platform in `install/`.
 
 ### A fixed address
 
@@ -125,7 +125,7 @@ A terminal window someone must leave open **will** be closed, and a laptop
 3. A desktop PC, with the service configured to start at boot rather than at
    login
 
-On Linux, `deploy/moodle-mcp.service` does this. `cloudflared service install`
+On Linux, `deploy/moodle-mcp.service` (Linux) and `deploy/com.fcpc.moodle-mcp.plist` (macOS) do this. `cloudflared service install`
 registers the tunnel as its own service, so the two halves come back
 independently.
 
